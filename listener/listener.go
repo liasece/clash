@@ -2,12 +2,13 @@ package proxy
 
 import (
 	"fmt"
-	"github.com/Dreamacro/clash/listener/sing_tun"
-	"golang.org/x/exp/slices"
 	"net"
 	"sort"
 	"strconv"
 	"sync"
+
+	"github.com/Dreamacro/clash/listener/sing_tun"
+	"golang.org/x/exp/slices"
 
 	"github.com/Dreamacro/clash/adapter/inbound"
 	"github.com/Dreamacro/clash/component/ebpf"
@@ -60,6 +61,7 @@ type Ports struct {
 	RedirPort  int `json:"redir-port"`
 	TProxyPort int `json:"tproxy-port"`
 	MixedPort  int `json:"mixed-port"`
+	PprofPort  int `json:"pprof-port"`
 }
 
 func GetTunConf() config.Tun {
