@@ -13,6 +13,14 @@ import (
 const (
 	Direct AdapterType = iota
 	Reject
+	Compatible
+	Pass
+
+	Relay
+	Selector
+	Fallback
+	URLTest
+	LoadBalance
 
 	Shadowsocks
 	ShadowsocksR
@@ -20,13 +28,9 @@ const (
 	Socks5
 	Http
 	Vmess
+	Vless
 	Trojan
-
-	Relay
-	Selector
-	Fallback
-	URLTest
-	LoadBalance
+	Hysteria
 )
 
 const (
@@ -38,6 +42,7 @@ const (
 type Connection interface {
 	Chains() Chain
 	AppendToChains(adapter ProxyAdapter)
+	RemoteDestination() string
 }
 
 type Chain []string
@@ -96,8 +101,18 @@ type ProxyAdapter interface {
 	DialContext(ctx context.Context, metadata *Metadata, opts ...dialer.Option) (Conn, error)
 	ListenPacketContext(ctx context.Context, metadata *Metadata, opts ...dialer.Option) (PacketConn, error)
 
+	// SupportUOT return UDP over TCP support
+	SupportUOT() bool
+	ListenPacketOnStreamConn(c net.Conn, metadata *Metadata) (PacketConn, error)
+
 	// Unwrap extracts the proxy from a proxy-group. It returns nil when nothing to extract.
-	Unwrap(metadata *Metadata) Proxy
+	Unwrap(metadata *Metadata, touch bool) Proxy
+}
+
+type Group interface {
+	URLTest(ctx context.Context, url string) (mp map[string]uint16, err error)
+	GetProxies(touch bool) []Proxy
+	Touch()
 }
 
 type DelayHistory struct {
@@ -128,7 +143,10 @@ func (at AdapterType) String() string {
 		return "Direct"
 	case Reject:
 		return "Reject"
-
+	case Compatible:
+		return "Compatible"
+	case Pass:
+		return "Pass"
 	case Shadowsocks:
 		return "Shadowsocks"
 	case ShadowsocksR:
@@ -141,8 +159,12 @@ func (at AdapterType) String() string {
 		return "Http"
 	case Vmess:
 		return "Vmess"
+	case Vless:
+		return "Vless"
 	case Trojan:
 		return "Trojan"
+	case Hysteria:
+		return "Hysteria"
 
 	case Relay:
 		return "Relay"

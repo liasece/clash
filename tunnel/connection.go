@@ -23,19 +23,21 @@ func handleUDPToRemote(packet C.UDPPacket, pc C.PacketConn, metadata *C.Metadata
 		return err
 	}
 	// reset timeout
-	pc.SetReadDeadline(time.Now().Add(udpTimeout))
+	_ = pc.SetReadDeadline(time.Now().Add(udpTimeout))
 
 	return nil
 }
 
 func handleUDPToLocal(packet C.UDPPacket, pc net.PacketConn, key string, oAddr, fAddr netip.Addr) {
 	buf := pool.Get(pool.UDPBufferSize)
-	defer pool.Put(buf)
-	defer natTable.Delete(key)
-	defer pc.Close()
+	defer func() {
+		_ = pc.Close()
+		natTable.Delete(key)
+		_ = pool.Put(buf)
+	}()
 
 	for {
-		pc.SetReadDeadline(time.Now().Add(udpTimeout))
+		_ = pc.SetReadDeadline(time.Now().Add(udpTimeout))
 		n, from, err := pc.ReadFrom(buf)
 		if err != nil {
 			return

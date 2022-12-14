@@ -3,6 +3,7 @@ package outboundgroup
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"time"
 
 	C "github.com/Dreamacro/clash/constant"
@@ -15,34 +16,42 @@ func addrToMetadata(rawAddress string) (addr *C.Metadata, err error) {
 		return
 	}
 
-	ip := net.ParseIP(host)
-	if ip == nil {
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
 		addr = &C.Metadata{
-			Host:    host,
-			DstIP:   nil,
-			DstPort: port,
+			AddrType: C.AtypDomainName,
+			Host:     host,
+			DstIP:    netip.Addr{},
+			DstPort:  port,
 		}
+		err = nil
 		return
-	} else if ip4 := ip.To4(); ip4 != nil {
+	} else if ip.Is4() {
 		addr = &C.Metadata{
-			Host:    "",
-			DstIP:   ip4,
-			DstPort: port,
+			AddrType: C.AtypIPv4,
+			Host:     "",
+			DstIP:    ip,
+			DstPort:  port,
 		}
 		return
 	}
 
 	addr = &C.Metadata{
-		Host:    "",
-		DstIP:   ip,
-		DstPort: port,
+		AddrType: C.AtypIPv6,
+		Host:     "",
+		DstIP:    ip,
+		DstPort:  port,
 	}
 	return
 }
 
 func tcpKeepAlive(c net.Conn) {
 	if tcp, ok := c.(*net.TCPConn); ok {
-		tcp.SetKeepAlive(true)
-		tcp.SetKeepAlivePeriod(30 * time.Second)
+		_ = tcp.SetKeepAlive(true)
+		_ = tcp.SetKeepAlivePeriod(30 * time.Second)
 	}
+}
+
+type SelectAble interface {
+	Set(string) error
 }

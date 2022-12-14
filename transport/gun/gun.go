@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Dreamacro/clash/common/pool"
+	C "github.com/Dreamacro/clash/constant"
 
 	"go.uber.org/atomic"
 	"golang.org/x/net/http2"
@@ -38,14 +39,13 @@ type DialFn = func(network, addr string) (net.Conn, error)
 type Conn struct {
 	response  *http.Response
 	request   *http.Request
-	transport *http2.Transport
+	transport *TransportWrap
 	writer    *io.PipeWriter
 	once      sync.Once
 	close     *atomic.Bool
 	err       error
 	remain    int
 	br        *bufio.Reader
-
 	// deadlines
 	deadline *time.Timer
 }
@@ -149,8 +149,8 @@ func (g *Conn) Close() error {
 	return g.writer.Close()
 }
 
-func (g *Conn) LocalAddr() net.Addr                { return &net.TCPAddr{IP: net.IPv4zero, Port: 0} }
-func (g *Conn) RemoteAddr() net.Addr               { return &net.TCPAddr{IP: net.IPv4zero, Port: 0} }
+func (g *Conn) LocalAddr() net.Addr                { return g.transport.LocalAddr() }
+func (g *Conn) RemoteAddr() net.Addr               { return g.transport.RemoteAddr() }
 func (g *Conn) SetReadDeadline(t time.Time) error  { return g.SetDeadline(t) }
 func (g *Conn) SetWriteDeadline(t time.Time) error { return g.SetDeadline(t) }
 
@@ -166,14 +166,20 @@ func (g *Conn) SetDeadline(t time.Time) error {
 	return nil
 }
 
-func NewHTTP2Client(dialFn DialFn, tlsConfig *tls.Config) *http2.Transport {
-	dialFunc := func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+func NewHTTP2Client(dialFn DialFn, tlsConfig *tls.Config) *TransportWrap {
+	wrap := TransportWrap{}
+	dialFunc := func(network, addr string, cfg *tls.Config) (net.Conn, error) {
 		pconn, err := dialFn(network, addr)
 		if err != nil {
 			return nil, err
 		}
 
+		wrap.remoteAddr = pconn.RemoteAddr()
 		cn := tls.Client(pconn, cfg)
+
+		// fix tls handshake not timeout
+		ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTLSTimeout)
+		defer cancel()
 		if err := cn.HandshakeContext(ctx); err != nil {
 			pconn.Close()
 			return nil, err
@@ -186,16 +192,18 @@ func NewHTTP2Client(dialFn DialFn, tlsConfig *tls.Config) *http2.Transport {
 		return cn, nil
 	}
 
-	return &http2.Transport{
-		DialTLSContext:     dialFunc,
+	wrap.Transport = &http2.Transport{
+		DialTLS:            dialFunc,
 		TLSClientConfig:    tlsConfig,
 		AllowHTTP:          false,
 		DisableCompression: true,
 		PingTimeout:        0,
 	}
+
+	return &wrap
 }
 
-func StreamGunWithTransport(transport *http2.Transport, cfg *Config) (net.Conn, error) {
+func StreamGunWithTransport(transport *TransportWrap, cfg *Config) (net.Conn, error) {
 	serviceName := "GunService"
 	if cfg.ServiceName != "" {
 		serviceName = cfg.ServiceName

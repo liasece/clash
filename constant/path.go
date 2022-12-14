@@ -4,9 +4,15 @@ import (
 	"os"
 	P "path"
 	"path/filepath"
+	"strings"
 )
 
 const Name = "clash"
+
+var (
+	GeositeName = "GeoSite.dat"
+	GeoipName   = "GeoIP.dat"
+)
 
 // Path is used to get the configuration path
 var Path = func() *path {
@@ -47,11 +53,25 @@ func (p *path) Resolve(path string) string {
 	if !filepath.IsAbs(path) {
 		return filepath.Join(p.HomeDir(), path)
 	}
-
 	return path
 }
 
 func (p *path) MMDB() string {
+	files, err := os.ReadDir(p.homeDir)
+	if err != nil {
+		return ""
+	}
+	for _, fi := range files {
+		if fi.IsDir() {
+			// 目录则直接跳过
+			continue
+		} else {
+			if strings.EqualFold(fi.Name(), "Country.mmdb") {
+				GeoipName = fi.Name()
+				return P.Join(p.homeDir, fi.Name())
+			}
+		}
+	}
 	return P.Join(p.homeDir, "Country.mmdb")
 }
 
@@ -61,4 +81,55 @@ func (p *path) OldCache() string {
 
 func (p *path) Cache() string {
 	return P.Join(p.homeDir, "cache.db")
+}
+
+func (p *path) GeoIP() string {
+	files, err := os.ReadDir(p.homeDir)
+	if err != nil {
+		return ""
+	}
+	for _, fi := range files {
+		if fi.IsDir() {
+			// 目录则直接跳过
+			continue
+		} else {
+			if strings.EqualFold(fi.Name(), "GeoIP.dat") {
+				GeoipName = fi.Name()
+				return P.Join(p.homeDir, fi.Name())
+			}
+		}
+	}
+	return P.Join(p.homeDir, "GeoIP.dat")
+}
+
+func (p *path) GeoSite() string {
+	files, err := os.ReadDir(p.homeDir)
+	if err != nil {
+		return ""
+	}
+	for _, fi := range files {
+		if fi.IsDir() {
+			// 目录则直接跳过
+			continue
+		} else {
+			if strings.EqualFold(fi.Name(), "GeoSite.dat") {
+				GeositeName = fi.Name()
+				return P.Join(p.homeDir, fi.Name())
+			}
+		}
+	}
+	return P.Join(p.homeDir, "GeoSite.dat")
+}
+
+func (p *path) GetAssetLocation(file string) string {
+	return P.Join(p.homeDir, file)
+}
+
+func (p *path) GetExecutableFullPath() string {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "clash"
+	}
+	res, _ := filepath.EvalSymlinks(exePath)
+	return res
 }

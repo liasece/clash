@@ -1,9 +1,10 @@
 package dns
 
 import (
-	"bytes"
 	"context"
+	"go.uber.org/atomic"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -27,9 +28,9 @@ type dhcpClient struct {
 	ifaceInvalidate time.Time
 	dnsInvalidate   time.Time
 
-	ifaceAddr *net.IPNet
+	ifaceAddr *netip.Prefix
 	done      chan struct{}
-	clients   []dnsClient
+	resolver  *Resolver
 	err       error
 }
 
@@ -41,15 +42,15 @@ func (d *dhcpClient) Exchange(m *D.Msg) (msg *D.Msg, err error) {
 }
 
 func (d *dhcpClient) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {
-	clients, err := d.resolve(ctx)
+	res, err := d.resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return batchExchange(ctx, clients, m)
+	return res.ExchangeContext(ctx, m)
 }
 
-func (d *dhcpClient) resolve(ctx context.Context) ([]dnsClient, error) {
+func (d *dhcpClient) resolve(ctx context.Context) (*Resolver, error) {
 	d.lock.Lock()
 
 	invalidated, err := d.invalidate()
@@ -64,19 +65,20 @@ func (d *dhcpClient) resolve(ctx context.Context) ([]dnsClient, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), DHCPTimeout)
 			defer cancel()
 
-			var res []dnsClient
+			var res *Resolver
 			dns, err := dhcp.ResolveDNSFromDHCP(ctx, d.ifaceName)
-			// dns never empty if err is nil
 			if err == nil {
 				nameserver := make([]NameServer, 0, len(dns))
 				for _, item := range dns {
 					nameserver = append(nameserver, NameServer{
 						Addr:      net.JoinHostPort(item.String(), "53"),
-						Interface: d.ifaceName,
+						Interface: atomic.NewString(d.ifaceName),
 					})
 				}
 
-				res = transform(nameserver, nil)
+				res = NewResolver(Config{
+					Main: nameserver,
+				})
 			}
 
 			d.lock.Lock()
@@ -85,7 +87,7 @@ func (d *dhcpClient) resolve(ctx context.Context) ([]dnsClient, error) {
 			close(done)
 
 			d.done = nil
-			d.clients = res
+			d.resolver = res
 			d.err = err
 		}()
 	}
@@ -95,7 +97,7 @@ func (d *dhcpClient) resolve(ctx context.Context) ([]dnsClient, error) {
 	for {
 		d.lock.Lock()
 
-		res, err, done := d.clients, d.err, d.done
+		res, err, done := d.resolver, d.err, d.done
 
 		d.lock.Unlock()
 
@@ -126,12 +128,12 @@ func (d *dhcpClient) invalidate() (bool, error) {
 		return false, err
 	}
 
-	addr, err := ifaceObj.PickIPv4Addr(nil)
+	addr, err := ifaceObj.PickIPv4Addr(netip.Addr{})
 	if err != nil {
 		return false, err
 	}
 
-	if time.Now().Before(d.dnsInvalidate) && d.ifaceAddr.IP.Equal(addr.IP) && bytes.Equal(d.ifaceAddr.Mask, addr.Mask) {
+	if time.Now().Before(d.dnsInvalidate) && d.ifaceAddr == addr {
 		return false, nil
 	}
 

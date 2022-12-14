@@ -1,8 +1,18 @@
 NAME=clash
 BINDIR=bin
-VERSION=$(shell git describe --tags || echo "unknown version")
+BRANCH=$(shell git branch --show-current)
+ifeq ($(BRANCH),Alpha)
+VERSION=alpha-$(shell git rev-parse --short HEAD)
+else ifeq ($(BRANCH),Beta)
+VERSION=beta-$(shell git rev-parse --short HEAD)
+else ifeq ($(BRANCH),)
+VERSION=$(shell git describe --tags)
+else
+VERSION=$(shell git rev-parse --short HEAD)
+endif
+
 BUILDTIME=$(shell date -u)
-GOBUILD=CGO_ENABLED=0 go build -trimpath -ldflags '-X "github.com/Dreamacro/clash/constant.Version=$(VERSION)" \
+GOBUILD=CGO_ENABLED=0 go build -tags with_gvisor -trimpath -ldflags '-X "github.com/Dreamacro/clash/constant.Version=$(VERSION)" \
 		-X "github.com/Dreamacro/clash/constant.BuildTime=$(BUILDTIME)" \
 		-w -s -buildid='
 
@@ -21,6 +31,7 @@ PLATFORM_LIST = \
 	linux-mips-hardfloat \
 	linux-mipsle-softfloat \
 	linux-mipsle-hardfloat \
+	android-arm64 \
 	linux-mips64 \
 	linux-mips64le \
 	freebsd-386 \
@@ -36,6 +47,9 @@ WINDOWS_ARCH_LIST = \
 	windows-armv7
 
 all: linux-amd64 darwin-amd64 windows-amd64 # Most used
+
+docker:
+	GOAMD64=v3 $(GOBUILD) -o $(BINDIR)/$(NAME)-$@
 
 darwin-amd64:
 	GOARCH=amd64 GOOS=darwin $(GOBUILD) -o $(BINDIR)/$(NAME)-$@
@@ -85,6 +99,9 @@ linux-mips64:
 linux-mips64le:
 	GOARCH=mips64le GOOS=linux $(GOBUILD) -o $(BINDIR)/$(NAME)-$@
 
+android-arm64:
+	GOARCH=arm64 GOOS=android $(GOBUILD) -o $(BINDIR)/$(NAME)-$@
+
 freebsd-386:
 	GOARCH=386 GOOS=freebsd $(GOBUILD) -o $(BINDIR)/$(NAME)-$@
 
@@ -125,6 +142,9 @@ $(zip_releases): %.zip : %
 all-arch: $(PLATFORM_LIST) $(WINDOWS_ARCH_LIST)
 
 releases: $(gz_releases) $(zip_releases)
+
+vet:
+	go test ./...
 
 lint:
 	GOOS=darwin golangci-lint run ./...

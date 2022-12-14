@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Dreamacro/clash/common/cache"
 	"net"
+	"time"
 
 	"github.com/Dreamacro/clash/adapter/outbound"
 	"github.com/Dreamacro/clash/common/murmur3"
-	"github.com/Dreamacro/clash/common/singledo"
 	"github.com/Dreamacro/clash/component/dialer"
 	C "github.com/Dreamacro/clash/constant"
 	"github.com/Dreamacro/clash/constant/provider"
@@ -20,10 +21,8 @@ import (
 type strategyFn = func(proxies []C.Proxy, metadata *C.Metadata) C.Proxy
 
 type LoadBalance struct {
-	*outbound.Base
+	*GroupBase
 	disableUDP bool
-	single     *singledo.Single
-	providers  []provider.ProxyProvider
 	strategyFn strategyFn
 }
 
@@ -37,6 +36,10 @@ func parseStrategy(config map[string]any) string {
 }
 
 func getKey(metadata *C.Metadata) string {
+	if metadata == nil {
+		return ""
+	}
+
 	if metadata.Host != "" {
 		// ip host
 		if ip := net.ParseIP(metadata.Host); ip != nil {
@@ -48,11 +51,21 @@ func getKey(metadata *C.Metadata) string {
 		}
 	}
 
-	if metadata.DstIP == nil {
+	if !metadata.DstIP.IsValid() {
 		return ""
 	}
 
 	return metadata.DstIP.String()
+}
+
+func getKeyWithSrcAndDst(metadata *C.Metadata) string {
+	dst := getKey(metadata)
+	src := ""
+	if metadata != nil {
+		src = metadata.SrcIP.String()
+	}
+
+	return fmt.Sprintf("%s%s", src, dst)
 }
 
 func jumpHash(key uint64, buckets int32) int32 {
@@ -69,13 +82,16 @@ func jumpHash(key uint64, buckets int32) int32 {
 
 // DialContext implements C.ProxyAdapter
 func (lb *LoadBalance) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (c C.Conn, err error) {
+	proxy := lb.Unwrap(metadata, true)
+
 	defer func() {
 		if err == nil {
 			c.AppendToChains(lb)
+			lb.onDialSuccess()
+		} else {
+			lb.onDialFailed(proxy.Type(), err)
 		}
 	}()
-
-	proxy := lb.Unwrap(metadata)
 
 	c, err = proxy.DialContext(ctx, metadata, lb.Base.DialOptions(opts...)...)
 	return
@@ -89,7 +105,7 @@ func (lb *LoadBalance) ListenPacketContext(ctx context.Context, metadata *C.Meta
 		}
 	}()
 
-	proxy := lb.Unwrap(metadata)
+	proxy := lb.Unwrap(metadata, true)
 	return proxy.ListenPacketContext(ctx, metadata, lb.Base.DialOptions(opts...)...)
 }
 
@@ -138,24 +154,51 @@ func strategyConsistentHashing() strategyFn {
 	}
 }
 
-// Unwrap implements C.ProxyAdapter
-func (lb *LoadBalance) Unwrap(metadata *C.Metadata) C.Proxy {
-	proxies := lb.proxies(true)
-	return lb.strategyFn(proxies, metadata)
+func strategyStickySessions() strategyFn {
+	ttl := time.Minute * 10
+	maxRetry := 5
+	lruCache := cache.NewLRUCache[uint64, int](
+		cache.WithAge[uint64, int](int64(ttl.Seconds())),
+		cache.WithSize[uint64, int](1000))
+	return func(proxies []C.Proxy, metadata *C.Metadata) C.Proxy {
+		key := uint64(murmur3.Sum32([]byte(getKeyWithSrcAndDst(metadata))))
+		length := len(proxies)
+		idx, has := lruCache.Get(key)
+		if !has {
+			idx = int(jumpHash(key+uint64(time.Now().UnixNano()), int32(length)))
+		}
+
+		nowIdx := idx
+		for i := 1; i < maxRetry; i++ {
+			proxy := proxies[nowIdx]
+			if proxy.Alive() {
+				if nowIdx != idx {
+					lruCache.Delete(key)
+					lruCache.Set(key, nowIdx)
+				}
+
+				return proxy
+			} else {
+				nowIdx = int(jumpHash(key+uint64(time.Now().UnixNano()), int32(length)))
+			}
+		}
+
+		lruCache.Delete(key)
+		lruCache.Set(key, 0)
+		return proxies[0]
+	}
 }
 
-func (lb *LoadBalance) proxies(touch bool) []C.Proxy {
-	elm, _, _ := lb.single.Do(func() (any, error) {
-		return getProvidersProxies(lb.providers, touch), nil
-	})
-
-	return elm.([]C.Proxy)
+// Unwrap implements C.ProxyAdapter
+func (lb *LoadBalance) Unwrap(metadata *C.Metadata, touch bool) C.Proxy {
+	proxies := lb.GetProxies(touch)
+	return lb.strategyFn(proxies, metadata)
 }
 
 // MarshalJSON implements C.ProxyAdapter
 func (lb *LoadBalance) MarshalJSON() ([]byte, error) {
 	var all []string
-	for _, proxy := range lb.proxies(false) {
+	for _, proxy := range lb.GetProxies(false) {
 		all = append(all, proxy.Name())
 	}
 	return json.Marshal(map[string]any{
@@ -171,18 +214,22 @@ func NewLoadBalance(option *GroupCommonOption, providers []provider.ProxyProvide
 		strategyFn = strategyConsistentHashing()
 	case "round-robin":
 		strategyFn = strategyRoundRobin()
+	case "sticky-sessions":
+		strategyFn = strategyStickySessions()
 	default:
 		return nil, fmt.Errorf("%w: %s", errStrategy, strategy)
 	}
 	return &LoadBalance{
-		Base: outbound.NewBase(outbound.BaseOption{
-			Name:        option.Name,
-			Type:        C.LoadBalance,
-			Interface:   option.Interface,
-			RoutingMark: option.RoutingMark,
+		GroupBase: NewGroupBase(GroupBaseOption{
+			outbound.BaseOption{
+				Name:        option.Name,
+				Type:        C.LoadBalance,
+				Interface:   option.Interface,
+				RoutingMark: option.RoutingMark,
+			},
+			option.Filter,
+			providers,
 		}),
-		single:     singledo.NewSingle(defaultGetProxiesDuration),
-		providers:  providers,
 		strategyFn: strategyFn,
 		disableUDP: option.DisableUDP,
 	}, nil

@@ -18,7 +18,7 @@ func Relay(leftConn, rightConn net.Conn) {
 		ch <- err
 	}()
 
-	io.Copy(WriteOnlyWriter{Writer: rightConn}, ReadOnlyReader{Reader: leftConn})
+	_, _ = io.Copy(WriteOnlyWriter{Writer: rightConn}, ReadOnlyReader{Reader: leftConn})
 	rightConn.SetReadDeadline(time.Now())
 	<-ch
 }

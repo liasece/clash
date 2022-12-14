@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	tlsC "github.com/Dreamacro/clash/component/tls"
 	"io"
 	"net"
 	"net/http"
@@ -22,27 +23,28 @@ type Http struct {
 	user      string
 	pass      string
 	tlsConfig *tls.Config
+	option    *HttpOption
 }
 
 type HttpOption struct {
 	BasicOption
-	Name           string `proxy:"name"`
-	Server         string `proxy:"server"`
-	Port           int    `proxy:"port"`
-	UserName       string `proxy:"username,omitempty"`
-	Password       string `proxy:"password,omitempty"`
-	TLS            bool   `proxy:"tls,omitempty"`
-	SNI            string `proxy:"sni,omitempty"`
-	SkipCertVerify bool   `proxy:"skip-cert-verify,omitempty"`
+	Name           string            `proxy:"name"`
+	Server         string            `proxy:"server"`
+	Port           int               `proxy:"port"`
+	UserName       string            `proxy:"username,omitempty"`
+	Password       string            `proxy:"password,omitempty"`
+	TLS            bool              `proxy:"tls,omitempty"`
+	SNI            string            `proxy:"sni,omitempty"`
+	SkipCertVerify bool              `proxy:"skip-cert-verify,omitempty"`
+	Fingerprint    string            `proxy:"fingerprint,omitempty"`
+	Headers        map[string]string `proxy:"headers,omitempty"`
 }
 
 // StreamConn implements C.ProxyAdapter
 func (h *Http) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) {
 	if h.tlsConfig != nil {
 		cc := tls.Client(c, h.tlsConfig)
-		ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTLSTimeout)
-		defer cancel()
-		err := cc.HandshakeContext(ctx)
+		err := cc.Handshake()
 		c = cc
 		if err != nil {
 			return nil, fmt.Errorf("%s connect error: %w", h.addr, err)
@@ -86,6 +88,13 @@ func (h *Http) shakeHand(metadata *C.Metadata, rw io.ReadWriter) error {
 		},
 	}
 
+	//增加headers
+	if len(h.option.Headers) != 0 {
+		for key, value := range h.option.Headers {
+			req.Header.Add(key, value)
+		}
+	}
+
 	if h.user != "" && h.pass != "" {
 		auth := h.user + ":" + h.pass
 		req.Header.Add("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(auth)))
@@ -119,29 +128,41 @@ func (h *Http) shakeHand(metadata *C.Metadata, rw io.ReadWriter) error {
 	return fmt.Errorf("can not connect remote err code: %d", resp.StatusCode)
 }
 
-func NewHttp(option HttpOption) *Http {
+func NewHttp(option HttpOption) (*Http, error) {
 	var tlsConfig *tls.Config
 	if option.TLS {
 		sni := option.Server
 		if option.SNI != "" {
 			sni = option.SNI
 		}
-		tlsConfig = &tls.Config{
-			InsecureSkipVerify: option.SkipCertVerify,
-			ServerName:         sni,
+		if len(option.Fingerprint) == 0 {
+			tlsConfig = tlsC.GetGlobalFingerprintTLCConfig(&tls.Config{
+				InsecureSkipVerify: option.SkipCertVerify,
+				ServerName:         sni,
+			})
+		} else {
+			var err error
+			if tlsConfig, err = tlsC.GetSpecifiedFingerprintTLSConfig(&tls.Config{
+				InsecureSkipVerify: option.SkipCertVerify,
+				ServerName:         sni,
+			}, option.Fingerprint); err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	return &Http{
 		Base: &Base{
-			name:  option.Name,
-			addr:  net.JoinHostPort(option.Server, strconv.Itoa(option.Port)),
-			tp:    C.Http,
-			iface: option.Interface,
-			rmark: option.RoutingMark,
+			name:   option.Name,
+			addr:   net.JoinHostPort(option.Server, strconv.Itoa(option.Port)),
+			tp:     C.Http,
+			iface:  option.Interface,
+			rmark:  option.RoutingMark,
+			prefer: C.NewDNSPrefer(option.IPVersion),
 		},
 		user:      option.UserName,
 		pass:      option.Password,
 		tlsConfig: tlsConfig,
-	}
+		option:    &option,
+	}, nil
 }

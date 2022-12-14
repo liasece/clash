@@ -1,11 +1,12 @@
 package dns
 
 import (
-	"net"
+	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/Dreamacro/clash/common/cache"
+	"github.com/Dreamacro/clash/common/nnip"
 	"github.com/Dreamacro/clash/component/fakeip"
 	"github.com/Dreamacro/clash/component/trie"
 	C "github.com/Dreamacro/clash/constant"
@@ -20,7 +21,7 @@ type (
 	middleware func(next handler) handler
 )
 
-func withHosts(hosts *trie.DomainTrie) middleware {
+func withHosts(hosts *trie.DomainTrie[netip.Addr], mapping *cache.LruCache[netip.Addr, string]) middleware {
 	return func(next handler) handler {
 		return func(ctx *context.DNSContext, r *D.Msg) (*D.Msg, error) {
 			q := r.Question[0]
@@ -29,28 +30,34 @@ func withHosts(hosts *trie.DomainTrie) middleware {
 				return next(ctx, r)
 			}
 
-			record := hosts.Search(strings.TrimRight(q.Name, "."))
+			host := strings.TrimRight(q.Name, ".")
+
+			record := hosts.Search(host)
 			if record == nil {
 				return next(ctx, r)
 			}
 
-			ip := record.Data.(net.IP)
+			ip := record.Data
 			msg := r.Copy()
 
-			if v4 := ip.To4(); v4 != nil && q.Qtype == D.TypeA {
+			if ip.Is4() && q.Qtype == D.TypeA {
 				rr := &D.A{}
-				rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeA, Class: D.ClassINET, Ttl: dnsDefaultTTL}
-				rr.A = v4
+				rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeA, Class: D.ClassINET, Ttl: 10}
+				rr.A = ip.AsSlice()
 
 				msg.Answer = []D.RR{rr}
-			} else if v6 := ip.To16(); v6 != nil && q.Qtype == D.TypeAAAA {
+			} else if q.Qtype == D.TypeAAAA {
 				rr := &D.AAAA{}
-				rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeAAAA, Class: D.ClassINET, Ttl: dnsDefaultTTL}
-				rr.AAAA = v6
-
+				rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeAAAA, Class: D.ClassINET, Ttl: 10}
+				ip := ip.As16()
+				rr.AAAA = ip[:]
 				msg.Answer = []D.RR{rr}
 			} else {
 				return next(ctx, r)
+			}
+
+			if mapping != nil {
+				mapping.SetWithExpire(ip, host, time.Now().Add(time.Second*10))
 			}
 
 			ctx.SetType(context.DNSTypeHost)
@@ -63,7 +70,7 @@ func withHosts(hosts *trie.DomainTrie) middleware {
 	}
 }
 
-func withMapping(mapping *cache.LruCache) middleware {
+func withMapping(mapping *cache.LruCache[netip.Addr, string]) middleware {
 	return func(next handler) handler {
 		return func(ctx *context.DNSContext, r *D.Msg) (*D.Msg, error) {
 			q := r.Question[0]
@@ -80,21 +87,21 @@ func withMapping(mapping *cache.LruCache) middleware {
 			host := strings.TrimRight(q.Name, ".")
 
 			for _, ans := range msg.Answer {
-				var ip net.IP
+				var ip netip.Addr
 				var ttl uint32
 
 				switch a := ans.(type) {
 				case *D.A:
-					ip = a.A
+					ip = nnip.IpToAddr(a.A)
 					ttl = a.Hdr.Ttl
 				case *D.AAAA:
-					ip = a.AAAA
+					ip = nnip.IpToAddr(a.AAAA)
 					ttl = a.Hdr.Ttl
 				default:
 					continue
 				}
 
-				mapping.SetWithExpire(ip.String(), host, time.Now().Add(time.Second*time.Duration(ttl)))
+				mapping.SetWithExpire(ip, host, time.Now().Add(time.Second*time.Duration(ttl)))
 			}
 
 			return msg, nil
@@ -124,7 +131,7 @@ func withFakeIP(fakePool *fakeip.Pool) middleware {
 			rr := &D.A{}
 			rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeA, Class: D.ClassINET, Ttl: dnsDefaultTTL}
 			ip := fakePool.Lookup(host)
-			rr.A = ip
+			rr.A = ip.AsSlice()
 			msg := r.Copy()
 			msg.Answer = []D.RR{rr}
 
@@ -157,6 +164,7 @@ func withResolver(resolver *Resolver) handler {
 		msg.SetRcode(r, msg.Rcode)
 		msg.Authoritative = true
 
+		log.Debugln("[DNS] %s --> %s", msgToDomain(r), msgToIP(msg))
 		return msg, nil
 	}
 }
@@ -172,11 +180,11 @@ func compose(middlewares []middleware, endpoint handler) handler {
 	return h
 }
 
-func newHandler(resolver *Resolver, mapper *ResolverEnhancer) handler {
+func NewHandler(resolver *Resolver, mapper *ResolverEnhancer) handler {
 	middlewares := []middleware{}
 
 	if resolver.hosts != nil {
-		middlewares = append(middlewares, withHosts(resolver.hosts))
+		middlewares = append(middlewares, withHosts(resolver.hosts, mapper.mapping))
 	}
 
 	if mapper.mode == C.DNSFakeIP {

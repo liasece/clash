@@ -2,11 +2,12 @@ package process
 
 import (
 	"fmt"
-	"net"
+	"net/netip"
 	"sync"
 	"syscall"
 	"unsafe"
 
+	"github.com/Dreamacro/clash/common/nnip"
 	"github.com/Dreamacro/clash/log"
 
 	"golang.org/x/sys/windows"
@@ -27,6 +28,10 @@ var (
 
 	once sync.Once
 )
+
+func resolveSocketByNetlink(network string, ip netip.Addr, srcPort int) (int32, int32, error) {
+	return 0, 0, ErrPlatformNotSupport
+}
 
 func initWin32API() error {
 	h, err := windows.LoadLibrary("iphlpapi.dll")
@@ -57,7 +62,7 @@ func initWin32API() error {
 	return nil
 }
 
-func findProcessName(network string, ip net.IP, srcPort int) (string, error) {
+func findProcessName(network string, ip netip.Addr, srcPort int) (int32, string, error) {
 	once.Do(func() {
 		err := initWin32API()
 		if err != nil {
@@ -67,7 +72,7 @@ func findProcessName(network string, ip net.IP, srcPort int) (string, error) {
 		}
 	})
 	family := windows.AF_INET
-	if ip.To4() == nil {
+	if ip.Is6() {
 		family = windows.AF_INET6
 	}
 
@@ -81,21 +86,22 @@ func findProcessName(network string, ip net.IP, srcPort int) (string, error) {
 		fn = getExUDPTable
 		class = udpTablePid
 	default:
-		return "", ErrInvalidNetwork
+		return -1, "", ErrInvalidNetwork
 	}
 
 	buf, err := getTransportTable(fn, family, class)
 	if err != nil {
-		return "", err
+		return -1, "", err
 	}
 
 	s := newSearcher(family == windows.AF_INET, network == TCP)
 
 	pid, err := s.Search(buf, ip, uint16(srcPort))
 	if err != nil {
-		return "", err
+		return -1, "", err
 	}
-	return getExecPathFromPID(pid)
+	pp, err := getExecPathFromPID(pid)
+	return -1, pp, err
 }
 
 type searcher struct {
@@ -107,7 +113,7 @@ type searcher struct {
 	tcpState int
 }
 
-func (s *searcher) Search(b []byte, ip net.IP, port uint16) (uint32, error) {
+func (s *searcher) Search(b []byte, ip netip.Addr, port uint16) (uint32, error) {
 	n := int(readNativeUint32(b[:4]))
 	itemSize := s.itemSize
 	for i := 0; i < n; i++ {
@@ -131,9 +137,9 @@ func (s *searcher) Search(b []byte, ip net.IP, port uint16) (uint32, error) {
 			continue
 		}
 
-		srcIP := net.IP(row[s.ip : s.ip+s.ipSize])
+		srcIP := nnip.IpToAddr(row[s.ip : s.ip+s.ipSize])
 		// windows binds an unbound udp socket to 0.0.0.0/[::] while first sendto
-		if !ip.Equal(srcIP) && (!srcIP.IsUnspecified() || s.tcpState != -1) {
+		if ip != srcIP && (!srcIP.IsUnspecified() || s.tcpState != -1) {
 			continue
 		}
 
@@ -214,8 +220,7 @@ func getExecPathFromPID(pid uint32) (string, error) {
 		uintptr(h),
 		uintptr(1),
 		uintptr(unsafe.Pointer(&buf[0])),
-		uintptr(unsafe.Pointer(&size)),
-	)
+		uintptr(unsafe.Pointer(&size)))
 	if r1 == 0 {
 		return "", err
 	}

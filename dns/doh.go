@@ -5,15 +5,16 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io"
-	"math/rand"
-	"net"
-	"net/http"
-
 	"github.com/Dreamacro/clash/component/dialer"
 	"github.com/Dreamacro/clash/component/resolver"
-
+	tlsC "github.com/Dreamacro/clash/component/tls"
+	"github.com/lucas-clemente/quic-go"
+	"github.com/lucas-clemente/quic-go/http3"
 	D "github.com/miekg/dns"
+	"io"
+	"net"
+	"net/http"
+	"strconv"
 )
 
 const (
@@ -23,7 +24,7 @@ const (
 
 type dohClient struct {
 	url       string
-	transport *http.Transport
+	transport http.RoundTripper
 }
 
 func (dc *dohClient) Exchange(m *D.Msg) (msg *D.Msg, err error) {
@@ -71,6 +72,7 @@ func (dc *dohClient) doRequest(req *http.Request) (msg *D.Msg, err error) {
 	if err != nil {
 		return nil, err
 	}
+
 	defer resp.Body.Close()
 
 	buf, err := io.ReadAll(resp.Body)
@@ -82,10 +84,57 @@ func (dc *dohClient) doRequest(req *http.Request) (msg *D.Msg, err error) {
 	return msg, err
 }
 
-func newDoHClient(url, iface string, r *Resolver) *dohClient {
-	return &dohClient{
-		url: url,
-		transport: &http.Transport{
+func newDoHClient(url string, r *Resolver, params map[string]string, proxyAdapter string) *dohClient {
+	useH3 := params["h3"] == "true"
+	TLCConfig := tlsC.GetDefaultTLSConfig()
+	var transport http.RoundTripper
+	if useH3 {
+		transport = &http3.RoundTripper{
+			Dial: func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (quic.EarlyConnection, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+
+				ip, err := resolver.ResolveIPWithResolver(host, r)
+				if err != nil {
+					return nil, err
+				}
+
+				portInt, err := strconv.Atoi(port)
+				if err != nil {
+					return nil, err
+				}
+
+				udpAddr := net.UDPAddr{
+					IP:   net.ParseIP(ip.String()),
+					Port: portInt,
+				}
+
+				var conn net.PacketConn
+				if proxyAdapter == "" {
+					conn, err = dialer.ListenPacket(ctx, "udp", "")
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					if wrapConn, err := dialContextExtra(ctx, proxyAdapter, "udp", ip, port); err == nil {
+						if pc, ok := wrapConn.(*wrapPacketConn); ok {
+							conn = pc
+						} else {
+							return nil, fmt.Errorf("conn isn't wrapPacketConn")
+						}
+					} else {
+						return nil, err
+					}
+				}
+
+				return quic.DialEarlyContext(ctx, conn, &udpAddr, host, tlsCfg, cfg)
+			},
+			TLSClientConfig: TLCConfig,
+		}
+	} else {
+		transport = &http.Transport{
 			ForceAttemptHTTP2: true,
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, port, err := net.SplitHostPort(addr)
@@ -93,25 +142,23 @@ func newDoHClient(url, iface string, r *Resolver) *dohClient {
 					return nil, err
 				}
 
-				ips, err := resolver.LookupIPWithResolver(ctx, host, r)
+				ip, err := resolver.ResolveIPWithResolver(host, r)
 				if err != nil {
 					return nil, err
-				} else if len(ips) == 0 {
-					return nil, fmt.Errorf("%w: %s", resolver.ErrIPNotFound, host)
-				}
-				ip := ips[rand.Intn(len(ips))]
-
-				options := []dialer.Option{}
-				if iface != "" {
-					options = append(options, dialer.WithInterface(iface))
 				}
 
-				return dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port), options...)
+				if proxyAdapter == "" {
+					return dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
+				} else {
+					return dialContextExtra(ctx, proxyAdapter, "tcp", ip, port)
+				}
 			},
-			TLSClientConfig: &tls.Config{
-				// alpn identifier, see https://tools.ietf.org/html/draft-hoffman-dprive-dns-tls-alpn-00#page-6
-				NextProtos: []string{"dns"},
-			},
-		},
+			TLSClientConfig: TLCConfig,
+		}
+	}
+
+	return &dohClient{
+		url:       url,
+		transport: transport,
 	}
 }

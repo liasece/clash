@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Dreamacro/clash/adapter/inbound"
 	"github.com/Dreamacro/clash/common/cache"
@@ -14,7 +15,7 @@ import (
 	"github.com/Dreamacro/clash/log"
 )
 
-func HandleConn(c net.Conn, in chan<- C.ConnContext, cache *cache.LruCache) {
+func HandleConn(c net.Conn, in chan<- C.ConnContext, cache *cache.Cache[string, bool]) {
 	client := newClient(c.RemoteAddr(), in)
 	defer client.CloseIdleConnections()
 
@@ -61,9 +62,9 @@ func HandleConn(c net.Conn, in chan<- C.ConnContext, cache *cache.LruCache) {
 			request.RequestURI = ""
 
 			if isUpgradeRequest(request) {
-				handleUpgrade(conn, request, in)
-
-				return // hijack connection
+				if resp = handleUpgrade(conn, conn.RemoteAddr(), request, in); resp == nil {
+					return // hijack connection
+				}
 			}
 
 			removeHopByHopHeaders(request.Header)
@@ -95,10 +96,10 @@ func HandleConn(c net.Conn, in chan<- C.ConnContext, cache *cache.LruCache) {
 		}
 	}
 
-	conn.Close()
+	_ = conn.Close()
 }
 
-func authenticate(request *http.Request, cache *cache.LruCache) *http.Response {
+func authenticate(request *http.Request, cache *cache.Cache[string, bool]) *http.Response {
 	authenticator := authStore.Authenticator()
 	if authenticator != nil {
 		credential := parseBasicProxyAuthorization(request)
@@ -108,13 +109,13 @@ func authenticate(request *http.Request, cache *cache.LruCache) *http.Response {
 			return resp
 		}
 
-		authed, exist := cache.Get(credential)
-		if !exist {
+		var authed bool
+		if authed = cache.Get(credential); !authed {
 			user, pass, err := decodeBasicProxyAuthorization(credential)
 			authed = err == nil && authenticator.Verify(user, pass)
-			cache.Set(credential, authed)
+			cache.Put(credential, authed, time.Minute)
 		}
-		if !authed.(bool) {
+		if !authed {
 			log.Infoln("Auth failed from %s", request.RemoteAddr)
 
 			return responseWith(request, http.StatusForbidden)

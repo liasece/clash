@@ -29,6 +29,7 @@ type GroupCommonOption struct {
 	Interval   int      `group:"interval,omitempty"`
 	Lazy       bool     `group:"lazy,omitempty"`
 	DisableUDP bool     `group:"disable-udp,omitempty"`
+	Filter     string   `group:"filter,omitempty"`
 }
 
 func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, providersMap map[string]types.ProxyProvider) (C.ProxyAdapter, error) {
@@ -74,8 +75,12 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
 			providers = append(providers, pd)
 			providersMap[groupName] = pd
 		} else {
-			if groupOption.URL == "" || groupOption.Interval == 0 {
-				return nil, errMissHealthCheck
+			if groupOption.URL == "" {
+				groupOption.URL = "http://www.gstatic.com/generate_204"
+			}
+
+			if groupOption.Interval == 0 {
+				groupOption.Interval = 300
 			}
 
 			hc := provider.NewHealthCheck(ps, groupOption.URL, uint(groupOption.Interval), groupOption.Lazy)
@@ -95,6 +100,8 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
 			return nil, err
 		}
 		providers = append(providers, list...)
+	} else {
+		groupOption.Filter = ""
 	}
 
 	var group C.ProxyAdapter

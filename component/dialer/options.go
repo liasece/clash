@@ -1,6 +1,8 @@
 package dialer
 
-import "go.uber.org/atomic"
+import (
+	"go.uber.org/atomic"
+)
 
 var (
 	DefaultOptions     []Option
@@ -12,6 +14,9 @@ type option struct {
 	interfaceName string
 	addrReuse     bool
 	routingMark   int
+	direct        bool
+	network       int
+	prefer        int
 }
 
 type Option func(opt *option)
@@ -31,5 +36,33 @@ func WithAddrReuse(reuse bool) Option {
 func WithRoutingMark(mark int) Option {
 	return func(opt *option) {
 		opt.routingMark = mark
+	}
+}
+
+func WithDirect() Option {
+	return func(opt *option) {
+		opt.direct = true
+	}
+}
+
+func WithPreferIPv4() Option {
+	return func(opt *option) {
+		opt.prefer = 4
+	}
+}
+
+func WithPreferIPv6() Option {
+	return func(opt *option) {
+		opt.prefer = 6
+	}
+}
+
+func WithOnlySingleStack(isIPv4 bool) Option {
+	return func(opt *option) {
+		if isIPv4 {
+			opt.network = 4
+		} else {
+			opt.network = 6
+		}
 	}
 }

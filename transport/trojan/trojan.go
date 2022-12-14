@@ -7,6 +7,8 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	tlsC "github.com/Dreamacro/clash/component/tls"
 	"io"
 	"net"
 	"net/http"
@@ -15,7 +17,10 @@ import (
 	"github.com/Dreamacro/clash/common/pool"
 	C "github.com/Dreamacro/clash/constant"
 	"github.com/Dreamacro/clash/transport/socks5"
+	"github.com/Dreamacro/clash/transport/vless"
 	"github.com/Dreamacro/clash/transport/vmess"
+
+	xtls "github.com/xtls/go"
 )
 
 const (
@@ -32,9 +37,13 @@ var (
 
 type Command = byte
 
-var (
+const (
 	CommandTCP byte = 1
 	CommandUDP byte = 3
+
+	// for XTLS
+	commandXRD byte = 0xf0 // XTLS direct mode
+	commandXRO byte = 0xf1 // XTLS origin mode
 )
 
 type Option struct {
@@ -42,6 +51,9 @@ type Option struct {
 	ALPN           []string
 	ServerName     string
 	SkipCertVerify bool
+	Fingerprint    string
+	Flow           string
+	FlowShow       bool
 }
 
 type WebsocketOption struct {
@@ -61,24 +73,62 @@ func (t *Trojan) StreamConn(conn net.Conn) (net.Conn, error) {
 	if len(t.option.ALPN) != 0 {
 		alpn = t.option.ALPN
 	}
+	switch t.option.Flow {
+	case vless.XRO, vless.XRD, vless.XRS:
+		xtlsConfig := &xtls.Config{
+			NextProtos:         alpn,
+			MinVersion:         xtls.VersionTLS12,
+			InsecureSkipVerify: t.option.SkipCertVerify,
+			ServerName:         t.option.ServerName,
+		}
 
-	tlsConfig := &tls.Config{
-		NextProtos:         alpn,
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: t.option.SkipCertVerify,
-		ServerName:         t.option.ServerName,
+		if len(t.option.Fingerprint) == 0 {
+			xtlsConfig = tlsC.GetGlobalFingerprintXTLCConfig(xtlsConfig)
+		} else {
+			var err error
+			if xtlsConfig, err = tlsC.GetSpecifiedFingerprintXTLSConfig(xtlsConfig, t.option.Fingerprint); err != nil {
+				return nil, err
+			}
+		}
+
+		xtlsConn := xtls.Client(conn, xtlsConfig)
+
+		ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTLSTimeout)
+		defer cancel()
+		if err := xtlsConn.HandshakeContext(ctx); err != nil {
+			return nil, err
+		}
+		return xtlsConn, nil
+	default:
+		tlsConfig := &tls.Config{
+			NextProtos:         alpn,
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: t.option.SkipCertVerify,
+			ServerName:         t.option.ServerName,
+		}
+
+		if len(t.option.Fingerprint) == 0 {
+			tlsConfig = tlsC.GetGlobalFingerprintTLCConfig(tlsConfig)
+		} else {
+			var err error
+			if tlsConfig, err = tlsC.GetSpecifiedFingerprintTLSConfig(tlsConfig, t.option.Fingerprint); err != nil {
+				return nil, err
+			}
+		}
+
+		tlsConn := tls.Client(conn, tlsConfig)
+		if err := tlsConn.Handshake(); err != nil {
+			return nil, err
+		}
+		// fix tls handshake not timeout
+		ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTLSTimeout)
+		defer cancel()
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			return nil, err
+		}
+
+		return tlsConn, nil
 	}
-
-	tlsConn := tls.Client(conn, tlsConfig)
-
-	// fix tls handshake not timeout
-	ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTLSTimeout)
-	defer cancel()
-	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		return nil, err
-	}
-
-	return tlsConn, nil
 }
 
 func (t *Trojan) StreamWebsocketConn(conn net.Conn, wsOptions *WebsocketOption) (net.Conn, error) {
@@ -104,7 +154,37 @@ func (t *Trojan) StreamWebsocketConn(conn net.Conn, wsOptions *WebsocketOption) 
 	})
 }
 
+func (t *Trojan) PresetXTLSConn(conn net.Conn) (net.Conn, error) {
+	switch t.option.Flow {
+	case vless.XRO, vless.XRD, vless.XRS:
+		if xtlsConn, ok := conn.(*xtls.Conn); ok {
+			xtlsConn.RPRX = true
+			xtlsConn.SHOW = t.option.FlowShow
+			xtlsConn.MARK = "XTLS"
+			if t.option.Flow == vless.XRS {
+				t.option.Flow = vless.XRD
+			}
+
+			if t.option.Flow == vless.XRD {
+				xtlsConn.DirectMode = true
+			}
+		} else {
+			return conn, fmt.Errorf("failed to use %s, maybe \"security\" is not \"xtls\"", t.option.Flow)
+		}
+	}
+
+	return conn, nil
+}
+
 func (t *Trojan) WriteHeader(w io.Writer, command Command, socks5Addr []byte) error {
+	if command == CommandTCP {
+		if t.option.Flow == vless.XRD {
+			command = commandXRD
+		} else if t.option.Flow == vless.XRO {
+			command = commandXRO
+		}
+	}
+
 	buf := pool.GetBuffer()
 	defer pool.PutBuffer(buf)
 

@@ -53,6 +53,10 @@ func streamConn(c net.Conn, option streamOption) *snell.Snell {
 // StreamConn implements C.ProxyAdapter
 func (s *Snell) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) {
 	c = streamConn(c, streamOption{s.psk, s.version, s.addr, s.obfsOption})
+	if metadata.NetWork == C.UDP {
+		err := snell.WriteUDPHeader(c, s.version)
+		return c, err
+	}
 	port, _ := strconv.ParseUint(metadata.DstPort, 10, 16)
 	err := snell.WriteHeader(c, metadata.String(), uint(port), s.version)
 	return c, err
@@ -104,6 +108,17 @@ func (s *Snell) ListenPacketContext(ctx context.Context, metadata *C.Metadata, o
 	return newPacketConn(pc, s), nil
 }
 
+// ListenPacketOnStreamConn implements C.ProxyAdapter
+func (s *Snell) ListenPacketOnStreamConn(c net.Conn, metadata *C.Metadata) (_ C.PacketConn, err error) {
+	pc := snell.PacketConn(c)
+	return newPacketConn(pc, s), nil
+}
+
+// SupportUOT implements C.ProxyAdapter
+func (s *Snell) SupportUOT() bool {
+	return true
+}
+
 func NewSnell(option SnellOption) (*Snell, error) {
 	addr := net.JoinHostPort(option.Server, strconv.Itoa(option.Port))
 	psk := []byte(option.Psk)
@@ -137,12 +152,13 @@ func NewSnell(option SnellOption) (*Snell, error) {
 
 	s := &Snell{
 		Base: &Base{
-			name:  option.Name,
-			addr:  addr,
-			tp:    C.Snell,
-			udp:   option.UDP,
-			iface: option.Interface,
-			rmark: option.RoutingMark,
+			name:   option.Name,
+			addr:   addr,
+			tp:     C.Snell,
+			udp:    option.UDP,
+			iface:  option.Interface,
+			rmark:  option.RoutingMark,
+			prefer: C.NewDNSPrefer(option.IPVersion),
 		},
 		psk:        psk,
 		obfsOption: obfsOption,

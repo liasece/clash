@@ -1,22 +1,25 @@
-FROM --platform=${BUILDPLATFORM} golang:alpine as builder
+FROM golang:alpine as builder
 
-RUN apk add --no-cache make git ca-certificates tzdata && \
-    wget -O /Country.mmdb https://github.com/Dreamacro/maxmind-geoip/releases/latest/download/Country.mmdb
-WORKDIR /workdir
-COPY --from=tonistiigi/xx:golang / /
-ARG TARGETOS TARGETARCH TARGETVARIANT
+RUN apk add --no-cache make git &&
+    mkdir /clash-config &&
+    wget -O /clash-config/Country.mmdb https://raw.githubusercontent.com/Loyalsoldier/geoip/release/Country.mmdb &&
+    wget -O /clash-config/geosite.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat &&
+    wget -O /clash-config/geoip.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
 
-RUN --mount=target=. \
-    --mount=type=cache,target=/root/.cache/go-build \
-    --mount=type=cache,target=/go/pkg/mod \
-    make BINDIR= ${TARGETOS}-${TARGETARCH}${TARGETVARIANT} && \
-    mv /clash* /clash
+COPY . /clash-src
+WORKDIR /clash-src
+RUN go mod download &&
+    make docker &&
+    mv ./bin/clash-docker /clash
 
 FROM alpine:latest
 LABEL org.opencontainers.image.source="https://github.com/Dreamacro/clash"
 
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /Country.mmdb /root/.config/clash/
-COPY --from=builder /clash /
-ENTRYPOINT ["/clash"]
+RUN apk add --no-cache ca-certificates tzdata iptables
+
+VOLUME ["/root/.config/clash/"]
+
+COPY --from=builder /clash-config/ /root/.config/clash/
+COPY --from=builder /clash /clash
+RUN chmod +x /clash
+ENTRYPOINT [ "/clash" ]
