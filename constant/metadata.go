@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"time"
 )
 
 // Socks addr type
@@ -112,6 +113,7 @@ type Metadata struct {
 	Process     string     `json:"process"`
 	ProcessPath string     `json:"processPath"`
 	RemoteDst   string     `json:"remoteDestination"`
+	CreateAt    time.Time  `json:"createAt"`
 }
 
 func (m *Metadata) RemoteAddress() string {

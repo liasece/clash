@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Dreamacro/clash/common/queue"
-	"github.com/Dreamacro/clash/component/dialer"
-	C "github.com/Dreamacro/clash/constant"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"time"
+
+	"github.com/Dreamacro/clash/common/queue"
+	"github.com/Dreamacro/clash/component/dialer"
+	C "github.com/Dreamacro/clash/constant"
 
 	"go.uber.org/atomic"
 )
@@ -202,6 +203,7 @@ func urlToMetadata(rawURL string) (addr C.Metadata, err error) {
 		Host:     u.Hostname(),
 		DstIP:    netip.Addr{},
 		DstPort:  port,
+		CreateAt: time.Now(),
 	}
 	return
 }

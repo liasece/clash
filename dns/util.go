@@ -167,6 +167,7 @@ func dialContextExtra(ctx context.Context, adapterName string, network string, d
 		Host:     "",
 		DstIP:    dstIP,
 		DstPort:  port,
+		CreateAt: time.Now(),
 	}
 
 	adapter, ok := tunnel.Proxies()[adapterName]

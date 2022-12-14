@@ -3,6 +3,7 @@ package inbound
 import (
 	"net"
 	"net/netip"
+	"time"
 
 	C "github.com/Dreamacro/clash/constant"
 	"github.com/Dreamacro/clash/context"
@@ -27,7 +28,9 @@ func NewSocket(target socks5.Addr, conn net.Conn, source C.Type) *context.ConnCo
 }
 
 func NewInner(conn net.Conn, dst string, host string) *context.ConnContext {
-	metadata := &C.Metadata{}
+	metadata := &C.Metadata{
+		CreateAt: time.Now(),
+	}
 	metadata.NetWork = C.TCP
 	metadata.Type = C.INNER
 	metadata.DNSMode = C.DNSMapping

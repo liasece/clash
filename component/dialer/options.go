@@ -17,6 +17,8 @@ type option struct {
 	direct        bool
 	network       int
 	prefer        int
+	useConnPool   bool
+	fromProxy     bool
 }
 
 type Option func(opt *option)
@@ -24,6 +26,18 @@ type Option func(opt *option)
 func WithInterface(name string) Option {
 	return func(opt *option) {
 		opt.interfaceName = name
+	}
+}
+
+func WithUseConnPool(useConnPool bool) Option {
+	return func(opt *option) {
+		opt.useConnPool = useConnPool
+	}
+}
+
+func WithFromProxy(fromProxy bool) Option {
+	return func(opt *option) {
+		opt.fromProxy = fromProxy
 	}
 }
 

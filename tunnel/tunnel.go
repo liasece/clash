@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Dreamacro/clash/component/dialer"
 	P "github.com/Dreamacro/clash/component/process"
 
 	"github.com/Dreamacro/clash/adapter/inbound"
@@ -190,6 +191,7 @@ func preHandleMetadata(metadata *C.Metadata) error {
 }
 
 func resolveMetadata(_ C.PlainContext, metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, err error) {
+	begin := time.Now()
 	switch mode {
 	case Direct:
 		proxy = proxies["DIRECT"]
@@ -199,6 +201,8 @@ func resolveMetadata(_ C.PlainContext, metadata *C.Metadata) (proxy C.Proxy, rul
 	default:
 		proxy, rule, err = match(metadata)
 	}
+
+	log.Debugln("resolveMetadata finish: take: %s inTransaction: %s %s --> %s", time.Since(begin), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
 	return
 }
 
@@ -317,6 +321,8 @@ func handleTCPConn(connCtx C.ConnContext) {
 		return
 	}
 
+	log.Debugln("handleTCPConn begin: (%s) %s --> %s", time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
+
 	if err := preHandleMetadata(metadata); err != nil {
 		log.Debugln("[Metadata PreHandle] error: %s", err)
 		return
@@ -343,14 +349,20 @@ func handleTCPConn(connCtx C.ConnContext) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTCPTimeout)
 	defer cancel()
-	remoteConn, err := proxy.DialContext(ctx, dialMetadata)
-	if err != nil {
-		if rule == nil {
-			log.Warnln("[TCP] dial %s to %s error: %s", proxy.Name(), metadata.RemoteAddress(), err.Error())
-		} else {
-			log.Warnln("[TCP] dial %s (match %s(%s)) to %s error: %s", proxy.Name(), rule.RuleType().String(), rule.Payload(), metadata.RemoteAddress(), err.Error())
+	var remoteConn C.Conn
+	{
+		begin := time.Now()
+		var err error
+		remoteConn, err = proxy.DialContext(ctx, dialMetadata, dialer.WithUseConnPool(true))
+		if err != nil {
+			if rule == nil {
+				log.Warnln("[TCP] dial %s to %s error: %s", proxy.Name(), metadata.RemoteAddress(), err.Error())
+			} else {
+				log.Warnln("[TCP] dial %s (match %s(%s)) to %s error: %s", proxy.Name(), rule.RuleType().String(), rule.Payload(), metadata.RemoteAddress(), err.Error())
+			}
+			return
 		}
-		return
+		log.Debugln("DialContext finish: take: %s inTransaction: %s %s --> %s", time.Since(begin), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
 	}
 
 	remoteConn = statistic.NewTCPTracker(remoteConn, statistic.DefaultManager, metadata, rule)
@@ -373,7 +385,11 @@ func handleTCPConn(connCtx C.ConnContext) {
 		log.Infoln("[TCP] %s --> %s doesn't match any rule using DIRECT", metadata.SourceAddress(), metadata.RemoteAddress())
 	}
 
+	log.Debugln("handleSocket begin: (%s) %s --> %s", time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
+
 	handleSocket(connCtx, remoteConn)
+
+	log.Debugln("handleSocket finish: (%s) %s --> %s", time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
 }
 
 func shouldResolveIP(rule C.Rule, metadata *C.Metadata) bool {

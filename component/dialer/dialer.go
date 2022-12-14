@@ -2,14 +2,20 @@ package dialer
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Dreamacro/clash/component/resolver"
-	"go.uber.org/atomic"
+	"io"
 	"net"
 	"net/netip"
 	"strings"
 	"sync"
+
+	"github.com/Dreamacro/clash/component/resolver"
+	"github.com/Dreamacro/clash/log"
+	"go.uber.org/atomic"
 )
 
 var (
@@ -20,6 +26,7 @@ var (
 	DisableIPv6                = false
 	ErrorInvalidedNetworkStack = errors.New("invalided network stack")
 	ErrorDisableIPv6           = errors.New("IPv6 is disabled, dialer cancel")
+	defaultPools               = &Pools{}
 )
 
 func DialContext(ctx context.Context, network, address string, options ...Option) (net.Conn, error) {
@@ -36,6 +43,55 @@ func DialContext(ctx context.Context, network, address string, options ...Option
 		o(opt)
 	}
 
+	if opt.useConnPool && opt.fromProxy {
+		return poolDialContext(ctx, network, address, opt)
+	}
+
+	return iDialContext(ctx, network, address, opt)
+}
+
+// IDByHash get id by md5 from interface
+func PoolIDByHash(is ...interface{}) (string, error) {
+	md5h := md5.New()
+	for _, v := range is {
+		data, err := json.Marshal(v)
+		if err != nil {
+			return "", err
+		}
+		_, err = io.WriteString(md5h, string(data))
+		if err != nil {
+			return "", err
+		}
+	}
+	return hex.EncodeToString(md5h.Sum(nil)), nil
+}
+
+func poolDialContext(ctx context.Context, network, address string, opt *option) (net.Conn, error) {
+	key, err := PoolIDByHash(network, address,
+		opt.interfaceName,
+		opt.addrReuse,
+		opt.routingMark,
+		opt.direct,
+		opt.network,
+		opt.prefer,
+		opt.useConnPool,
+	)
+	if err != nil {
+		return nil, err
+	}
+	p := defaultPools.MustGet(key, network, address, opt)
+	conn, err := p.Pull(ctx)
+	if err != nil {
+		if !errors.Is(err, ErrPoolEmpty) {
+			log.Errorln("[Dialer] [Pool] poolDialContext Pull %s error: %s", address, err.Error())
+		}
+		log.Debugln("[Dialer] [Pool] poolDialContext Pull %s: %s", address, err.Error())
+		return iDialContext(ctx, network, address, opt)
+	}
+	return conn, nil
+}
+
+func iDialContext(ctx context.Context, network, address string, opt *option) (net.Conn, error) {
 	if opt.network == 4 || opt.network == 6 {
 		if strings.Contains(network, "tcp") {
 			network = "tcp"

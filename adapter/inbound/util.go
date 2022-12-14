@@ -1,13 +1,14 @@
 package inbound
 
 import (
-	"github.com/Dreamacro/clash/common/nnip"
 	"net"
 	"net/http"
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/Dreamacro/clash/common/nnip"
 	C "github.com/Dreamacro/clash/constant"
 	"github.com/Dreamacro/clash/transport/socks5"
 )
@@ -15,6 +16,7 @@ import (
 func parseSocksAddr(target socks5.Addr) *C.Metadata {
 	metadata := &C.Metadata{
 		AddrType: int(target[0]),
+		CreateAt: time.Now(),
 	}
 
 	switch target[0] {
@@ -50,6 +52,7 @@ func parseHTTPAddr(request *http.Request) *C.Metadata {
 		Host:     host,
 		DstIP:    netip.Addr{},
 		DstPort:  port,
+		CreateAt: time.Now(),
 	}
 
 	ip, err := netip.ParseAddr(host)

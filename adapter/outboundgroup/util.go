@@ -23,6 +23,7 @@ func addrToMetadata(rawAddress string) (addr *C.Metadata, err error) {
 			Host:     host,
 			DstIP:    netip.Addr{},
 			DstPort:  port,
+			CreateAt: time.Now(),
 		}
 		err = nil
 		return
@@ -32,6 +33,7 @@ func addrToMetadata(rawAddress string) (addr *C.Metadata, err error) {
 			Host:     "",
 			DstIP:    ip,
 			DstPort:  port,
+			CreateAt: time.Now(),
 		}
 		return
 	}
@@ -41,6 +43,7 @@ func addrToMetadata(rawAddress string) (addr *C.Metadata, err error) {
 		Host:     "",
 		DstIP:    ip,
 		DstPort:  port,
+		CreateAt: time.Now(),
 	}
 	return
 }

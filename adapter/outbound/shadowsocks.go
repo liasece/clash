@@ -6,14 +6,16 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/Dreamacro/clash/common/structure"
 	"github.com/Dreamacro/clash/component/dialer"
 	C "github.com/Dreamacro/clash/constant"
+	"github.com/Dreamacro/clash/log"
 	obfs "github.com/Dreamacro/clash/transport/simple-obfs"
 	"github.com/Dreamacro/clash/transport/socks5"
 	v2rayObfs "github.com/Dreamacro/clash/transport/v2ray-plugin"
-	"github.com/sagernet/sing-shadowsocks"
+	shadowsocks "github.com/sagernet/sing-shadowsocks"
 	"github.com/sagernet/sing-shadowsocks/shadowimpl"
 	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
@@ -83,10 +85,13 @@ func (ss *ShadowSocks) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, e
 
 // DialContext implements C.ProxyAdapter
 func (ss *ShadowSocks) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (_ C.Conn, err error) {
-	c, err := dialer.DialContext(ctx, "tcp", ss.addr, ss.Base.DialOptions(opts...)...)
+	begin := time.Now()
+	c, err := dialer.DialContext(ctx, "tcp", ss.addr, append([]dialer.Option{dialer.WithFromProxy(true)}, ss.Base.DialOptions(opts...)...)...)
 	if err != nil {
 		return nil, fmt.Errorf("%s connect error: %w", ss.addr, err)
 	}
+	log.Debugln("ShadowSocks DialContext finish: take: %s inTransaction: %s (%s) %s --> %s", time.Since(begin), time.Since(metadata.CreateAt), ss.addr, metadata.SourceDetail(), metadata.RemoteAddress())
+
 	tcpKeepAlive(c)
 
 	defer safeConnClose(c, err)
