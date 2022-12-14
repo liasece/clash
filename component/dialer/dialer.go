@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Dreamacro/clash/component/resolver"
 	"github.com/Dreamacro/clash/log"
@@ -30,6 +31,7 @@ var (
 )
 
 func DialContext(ctx context.Context, network, address string, options ...Option) (net.Conn, error) {
+	begin := time.Now()
 	opt := &option{
 		interfaceName: DefaultInterface.Load(),
 		routingMark:   int(DefaultRoutingMark.Load()),
@@ -44,9 +46,15 @@ func DialContext(ctx context.Context, network, address string, options ...Option
 	}
 
 	if opt.useConnPool && opt.fromProxy {
+		defer func() {
+			log.Debugln("[Dialer] [Pool] DialContext finish: take: %s %s %s", address, network, time.Since(begin))
+		}()
 		return poolDialContext(ctx, network, address, opt)
 	}
 
+	defer func() {
+		log.Debugln("[Dialer] DialContext finish: take: %s %s %s", address, network, time.Since(begin))
+	}()
 	return iDialContext(ctx, network, address, opt)
 }
 
@@ -68,6 +76,7 @@ func PoolIDByHash(is ...interface{}) (string, error) {
 
 func poolDialContext(ctx context.Context, network, address string, opt *option) (net.Conn, error) {
 	key, err := PoolIDByHash(network, address,
+		opt.poolID,
 		opt.interfaceName,
 		opt.addrReuse,
 		opt.routingMark,
@@ -79,15 +88,20 @@ func poolDialContext(ctx context.Context, network, address string, opt *option) 
 	if err != nil {
 		return nil, err
 	}
+	ps := opt.pools
+	if ps == nil {
+		ps = defaultPools
+	}
 	p := defaultPools.MustGet(key, network, address, opt)
 	conn, err := p.Pull(ctx)
 	if err != nil {
 		if !errors.Is(err, ErrPoolEmpty) {
-			log.Errorln("[Dialer] [Pool] poolDialContext Pull %s error: %s", address, err.Error())
+			log.Errorln("[Dialer] [Pool] poolDialContext Pull %s %s error: %s", address, network, err.Error())
 		}
-		log.Debugln("[Dialer] [Pool] poolDialContext Pull %s: %s", address, err.Error())
+		log.Debugln("[Dialer] [Pool] poolDialContext Pull %s %s: %s", address, network, err.Error())
 		return iDialContext(ctx, network, address, opt)
 	}
+	log.Debugln("[Dialer] [Pool] poolDialContext success %s %s", address, network)
 	return conn, nil
 }
 

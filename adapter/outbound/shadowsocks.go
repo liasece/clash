@@ -90,7 +90,10 @@ func (ss *ShadowSocks) DialContext(ctx context.Context, metadata *C.Metadata, op
 	if err != nil {
 		return nil, fmt.Errorf("%s connect error: %w", ss.addr, err)
 	}
-	log.Debugln("ShadowSocks DialContext finish: take: %s inTransaction: %s (%s) %s --> %s", time.Since(begin), time.Since(metadata.CreateAt), ss.addr, metadata.SourceDetail(), metadata.RemoteAddress())
+	log.Debugln("[ShadowSocks] DialContext dialer finish: %s tcp take: %s inTransaction: %s %s --> %s", ss.addr, time.Since(begin), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
+	defer func() {
+		log.Debugln("[ShadowSocks] DialContext all finish: %s tcp take: %s inTransaction: %s %s --> %s", ss.addr, time.Since(begin), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
+	}()
 
 	tcpKeepAlive(c)
 

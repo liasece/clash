@@ -19,9 +19,23 @@ type option struct {
 	prefer        int
 	useConnPool   bool
 	fromProxy     bool
+	pools         *Pools
+	poolID        string
 }
 
 type Option func(opt *option)
+
+func WithPools(pools *Pools) Option {
+	return func(opt *option) {
+		opt.pools = pools
+	}
+}
+
+func WithPoolID(poolID string) Option {
+	return func(opt *option) {
+		opt.poolID = poolID
+	}
+}
 
 func WithInterface(name string) Option {
 	return func(opt *option) {

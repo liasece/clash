@@ -362,7 +362,7 @@ func handleTCPConn(connCtx C.ConnContext) {
 			}
 			return
 		}
-		log.Debugln("DialContext finish: take: %s inTransaction: %s %s --> %s", time.Since(begin), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
+		log.Debugln("[TCP] DialContext %s finish %s: take: %s inTransaction: %s %s --> %s", proxy.Name(), proxy.Addr(), time.Since(begin), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
 	}
 
 	remoteConn = statistic.NewTCPTracker(remoteConn, statistic.DefaultManager, metadata, rule)
@@ -385,11 +385,11 @@ func handleTCPConn(connCtx C.ConnContext) {
 		log.Infoln("[TCP] %s --> %s doesn't match any rule using DIRECT", metadata.SourceAddress(), metadata.RemoteAddress())
 	}
 
-	log.Debugln("handleSocket begin: (%s) %s --> %s", time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
+	log.Debugln("[TCP] handleSocket begin: %s (%s) %s --> %s", proxy.Addr(), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
 
 	handleSocket(connCtx, remoteConn)
 
-	log.Debugln("handleSocket finish: (%s) %s --> %s", time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
+	log.Debugln("[TCP] handleSocket finish: %s (%s) %s --> %s", proxy.Addr(), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
 }
 
 func shouldResolveIP(rule C.Rule, metadata *C.Metadata) bool {
