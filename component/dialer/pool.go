@@ -28,8 +28,13 @@ func (p *Pools) MustGet(id string, network, address string, opt *option) *Pool {
 	if p.m == nil {
 		p.m = make(map[string]*Pool)
 	}
+	for k, v := range p.m {
+		if v != nil && v.closed {
+			p.m[k] = nil
+		}
+	}
 	v, ok := p.m[id]
-	if !ok {
+	if !ok || v == nil || v.closed {
 		// new a pool
 		pool := &Pool{
 			key:       id,
@@ -68,6 +73,7 @@ type Pool struct {
 	currentNum int
 	keepAlive  time.Duration
 	lastPullAt time.Time
+	closed     bool
 
 	network string
 	address string
@@ -161,6 +167,7 @@ func (p *Pool) Close() {
 		}
 		conn.cancel()
 	}
+	p.closed = true
 	log.Debugln("[Pool] Close 1 %s %s", p.key, p.address)
 }
 
