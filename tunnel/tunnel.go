@@ -3,7 +3,6 @@ package tunnel
 import (
 	"context"
 	"fmt"
-	P "github.com/Dreamacro/clash/component/process"
 	"net"
 	"net/netip"
 	"path/filepath"
@@ -11,6 +10,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	P "github.com/Dreamacro/clash/component/process"
 
 	"github.com/Dreamacro/clash/adapter/inbound"
 	"github.com/Dreamacro/clash/component/nat"
@@ -394,11 +395,12 @@ func match(metadata *C.Metadata) (C.Proxy, C.Rule, error) {
 
 	for _, rule := range rules {
 		if !resolved && shouldResolveIP(rule, metadata) {
+			begin := time.Now()
 			ip, err := resolver.ResolveIP(metadata.Host)
 			if err != nil {
-				log.Debugln("[DNS] resolve %s error: %s", metadata.Host, err.Error())
+				log.Debugln("[DNS] (%s) resolve %s error: %s", time.Since(begin).String(), metadata.Host, err.Error())
 			} else {
-				log.Debugln("[DNS] %s --> %s", metadata.Host, ip.String())
+				log.Debugln("[DNS] (%s) %s --> %s", time.Since(begin).String(), metadata.Host, ip.String())
 				metadata.DstIP = ip
 			}
 			resolved = true

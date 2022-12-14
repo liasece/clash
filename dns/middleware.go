@@ -148,6 +148,7 @@ func withFakeIP(fakePool *fakeip.Pool) middleware {
 
 func withResolver(resolver *Resolver) handler {
 	return func(ctx *context.DNSContext, r *D.Msg) (*D.Msg, error) {
+		begin := time.Now()
 		ctx.SetType(context.DNSTypeRaw)
 		q := r.Question[0]
 
@@ -164,7 +165,7 @@ func withResolver(resolver *Resolver) handler {
 		msg.SetRcode(r, msg.Rcode)
 		msg.Authoritative = true
 
-		log.Debugln("[DNS] %s --> %s", msgToDomain(r), msgToIP(msg))
+		log.Debugln("[DNS] (%s) %s --> %s", time.Since(begin).String(), msgToDomain(r), msgToIP(msg))
 		return msg, nil
 	}
 }
