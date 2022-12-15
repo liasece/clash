@@ -191,9 +191,16 @@ func (p *Pool) FlushAlive() int {
 func (p *Pool) Sig() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.sig()
+}
+
+func (p *Pool) sig() {
 	if !p.closed {
 		// new a conn
-		p.signal <- struct{}{}
+		select {
+		case p.signal <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -235,7 +242,7 @@ func (p *Pool) Pull(ctx context.Context) (net.Conn, error) {
 	res, err := p.pull()
 	if !p.closed {
 		// new a conn
-		p.signal <- struct{}{}
+		p.sig()
 	}
 	p.mu.Unlock()
 
