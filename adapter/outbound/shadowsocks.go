@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Dreamacro/clash/common/structure"
@@ -84,19 +86,39 @@ func (ss *ShadowSocks) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, e
 }
 
 // DialContext implements C.ProxyAdapter
-func (ss *ShadowSocks) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (_ C.Conn, err error) {
+func (ss *ShadowSocks) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.Conn, error) {
 	begin := time.Now()
-	c, err := dialer.DialContext(ctx, "tcp", ss.addr, append([]dialer.Option{dialer.WithFromProxy(true)}, ss.Base.DialOptions(opts...)...)...)
-	if err != nil {
-		return nil, fmt.Errorf("%s connect error: %w", ss.addr, err)
-	}
-	log.Debugln("[ShadowSocks] DialContext dialer finish: %s tcp take: %s inTransaction: %s %s --> %s", ss.addr, time.Since(begin), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
 	defer func() {
 		log.Debugln("[ShadowSocks] DialContext all finish: %s tcp take: %s inTransaction: %s %s --> %s", ss.addr, time.Since(begin), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
 	}()
+	for {
+		c, err := dialer.DialContext(ctx, "tcp", ss.addr, append([]dialer.Option{dialer.WithFromProxy(true), dialer.WithOnPoolConnect(tcpKeepAlive)}, ss.Base.DialOptions(opts...)...)...)
+		if err != nil {
+			return nil, fmt.Errorf("%s connect error: %w", ss.addr, err)
+		}
+		log.Debugln("[ShadowSocks] DialContext dialer finish: %s tcp take: %s inTransaction: %s %s --> %s", ss.addr, time.Since(begin), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
 
-	tcpKeepAlive(c)
+		connID := ""
+		if poolConn, _ := c.(*dialer.PoolConn); poolConn != nil {
+			connID = poolConn.ID()
+		}
 
+		res, err := ss.iDialContext(c, metadata)
+		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(err.Error(), "unexpected EOF") {
+				log.Warnln("[ShadowSocks] iDialContext error with continue: %s connID: %s error: %s", ss.addr, connID, err)
+				continue
+			}
+			log.Warnln("[ShadowSocks] iDialContext error: %s connID: %s error: %s", ss.addr, connID, err)
+		}
+		return res, err
+	}
+}
+
+func (ss *ShadowSocks) iDialContext(c net.Conn, metadata *C.Metadata) (_ C.Conn, err error) {
+	if poolConn, ok := c.(*dialer.PoolConn); !ok || poolConn == nil {
+		tcpKeepAlive(c)
+	}
 	defer safeConnClose(c, err)
 
 	c, err = ss.StreamConn(c, metadata)

@@ -45,7 +45,7 @@ func DialContext(ctx context.Context, network, address string, options ...Option
 		o(opt)
 	}
 
-	if opt.useConnPool && opt.fromProxy {
+	if poolSize > 1 && opt.useConnPool && opt.fromProxy {
 		defer func() {
 			log.Debugln("[Dialer] [Pool] DialContext finish: take: %s %s %s", address, network, time.Since(begin))
 		}()
@@ -83,7 +83,6 @@ func poolDialContext(ctx context.Context, network, address string, opt *option) 
 		opt.direct,
 		opt.network,
 		opt.prefer,
-		opt.useConnPool,
 	)
 	if err != nil {
 		return nil, err
@@ -101,7 +100,8 @@ func poolDialContext(ctx context.Context, network, address string, opt *option) 
 		log.Debugln("[Dialer] [Pool] poolDialContext Pull %s %s: %s", address, network, err.Error())
 		return iDialContext(ctx, network, address, opt)
 	}
-	log.Debugln("[Dialer] [Pool] poolDialContext success %s %s", address, network)
+	poolConn := conn.(*PoolConn)
+	log.Debugln("[Dialer] [Pool] poolDialContext success %s %s id: %s", address, network, poolConn.ID())
 	return conn, nil
 }
 

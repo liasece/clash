@@ -3,6 +3,7 @@ package dialer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -11,9 +12,9 @@ import (
 )
 
 var (
-	poolSize          = 5
+	poolSize          = 0
 	ErrPoolEmpty      = errors.New("pool is empty")
-	DefaultTCPTimeout = 5 * time.Second
+	DefaultTCPTimeout = 30 * time.Second
 	keepAliveTime     = 30 * time.Second
 	keepPoolAliveTime = 10 * time.Minute
 )
@@ -57,9 +58,15 @@ func (p *Pools) MustGet(id string, network, address string, opt *option) *Pool {
 }
 
 type PoolConn struct {
+	net.Conn
+	id       string
 	createAt time.Time
-	conn     net.Conn
 	cancel   context.CancelFunc
+	ctx      context.Context
+}
+
+func (p *PoolConn) ID() string {
+	return p.id
 }
 
 type Pool struct {
@@ -74,6 +81,7 @@ type Pool struct {
 	keepAlive  time.Duration
 	lastPullAt time.Time
 	closed     bool
+	lastIntID  int
 
 	network string
 	address string
@@ -112,13 +120,22 @@ func (p *Pool) Watch() {
 							log.Debugln("[Pool] Watch iDialContext error %s %s {%s} error: %s", p.address, p.network, p.key, err.Error())
 							break
 						}
-						log.Debugln("[Pool] Watch iDialContext finish: %s %s take: %s", p.address, p.network, time.Since(begin))
 
-						err = p.Push(&PoolConn{
-							conn:     conn,
+						poolConn := &PoolConn{
+							id:       fmt.Sprint(p.NewID()),
+							Conn:     conn,
+							ctx:      ctx,
 							cancel:   cancel,
 							createAt: time.Now(),
-						})
+						}
+
+						log.Debugln("[Pool] Watch iDialContext finish: %s %s id: %s take: %s", p.address, p.network, poolConn.id, time.Since(begin))
+
+						if p.opt.onPoolConnect != nil {
+							p.opt.onPoolConnect(conn)
+						}
+
+						err = p.Push(poolConn)
 						if err != nil {
 							break
 						}
@@ -147,9 +164,9 @@ func (p *Pool) FlushAlive() {
 	for p.len() > 0 {
 		conn := p.list[p.headIndex]
 		if time.Since(conn.createAt) > p.keepAlive {
+			conn, _ := p.pull()
 			conn.cancel()
-			p.pull()
-			log.Debugln("[Pool] FlushAlive pull 1 %s %s %s", p.key, p.address, conn.createAt.String())
+			log.Debugln("[Pool] FlushAlive cancel pull 1 %s %s id: %s %s", p.key, p.address, conn.id, conn.createAt.String())
 		} else {
 			break
 		}
@@ -157,9 +174,10 @@ func (p *Pool) FlushAlive() {
 }
 
 func (p *Pool) Close() {
-	close(p.signal)
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	close(p.signal)
 	for p.len() > 0 {
 		conn, err := p.pull()
 		if err != nil {
@@ -191,28 +209,29 @@ func (p *Pool) push(conn *PoolConn) error {
 func (p *Pool) Pull(ctx context.Context) (net.Conn, error) {
 	p.mu.Lock()
 	res, err := p.pull()
+	if !p.closed {
+		// new a conn
+		p.signal <- struct{}{}
+	}
 	p.mu.Unlock()
-
-	// new a conn
-	p.signal <- struct{}{}
 
 	if err != nil {
 		return nil, err
 	}
 
 	go func() {
-		ch := ctx.Done()
-		if ch == nil {
-			return
-		}
-		<-ch
+		<-ctx.Done()
 		res.cancel()
+		log.Debugln("[Pool] connect closed %s %s id: %s", p.key, p.address, res.id)
 	}()
 
-	return res.conn, err
+	return res, err
 }
 
 func (p *Pool) pull() (*PoolConn, error) {
+	if p.closed {
+		return nil, errors.New("pool closed")
+	}
 	// get a conn from pool
 	if p.currentNum == 0 {
 		return nil, ErrPoolEmpty
@@ -223,6 +242,13 @@ func (p *Pool) pull() (*PoolConn, error) {
 	p.currentNum--
 	p.lastPullAt = time.Now()
 	return conn, nil
+}
+
+func (p *Pool) NewID() int {
+	p.mu.Lock()
+	p.lastIntID++
+	p.mu.Unlock()
+	return p.lastIntID
 }
 
 func (p *Pool) Len() int {

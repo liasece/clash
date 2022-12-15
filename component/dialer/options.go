@@ -1,6 +1,8 @@
 package dialer
 
 import (
+	"net"
+
 	"go.uber.org/atomic"
 )
 
@@ -21,6 +23,7 @@ type option struct {
 	fromProxy     bool
 	pools         *Pools
 	poolID        string
+	onPoolConnect func(conn net.Conn)
 }
 
 type Option func(opt *option)
@@ -34,6 +37,12 @@ func WithPools(pools *Pools) Option {
 func WithPoolID(poolID string) Option {
 	return func(opt *option) {
 		opt.poolID = poolID
+	}
+}
+
+func WithOnPoolConnect(onPoolConnect func(conn net.Conn)) Option {
+	return func(opt *option) {
+		opt.onPoolConnect = onPoolConnect
 	}
 }
 
