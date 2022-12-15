@@ -166,7 +166,7 @@ func runBasicConnTest(t *testing.T, runner *hub.Runner) {
 
 		var sleepTime time.Duration
 		// sleepTime = time.Millisecond * 300
-		sleepTime = time.Second * time.Duration(rand.Intn(i/10*10))
+		sleepTime = time.Second * time.Duration(rand.Intn(((i/10)+1)*10))
 		log.Infoln("sleepTime: %s", sleepTime)
 		time.Sleep(sleepTime)
 	}
