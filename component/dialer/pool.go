@@ -16,6 +16,8 @@ var (
 	DefaultTCPTimeout = 30 * time.Second
 	keepAliveTime     = 30 * time.Second
 	keepPoolAliveTime = 10 * time.Minute
+	lastIntIDMutex    sync.Mutex
+	lastIntID         = 0
 )
 
 type Pools struct {
@@ -40,7 +42,7 @@ func (p *Pools) MustGet(id string, network, address string, opt *option) *Pool {
 		// new a pool
 		pool := &Pool{
 			key:       id,
-			signal:    make(chan struct{}, p.PoolSize),
+			signal:    make(chan struct{}, p.PoolSize*2),
 			list:      make([]*PoolConn, p.PoolSize),
 			maxNum:    p.PoolSize,
 			keepAlive: keepAliveTime,
@@ -82,7 +84,6 @@ type Pool struct {
 	keepAlive  time.Duration
 	lastPullAt time.Time
 	closed     bool
-	lastIntID  int
 
 	network string
 	address string
@@ -133,7 +134,7 @@ func (p *Pool) Watch() {
 						}
 
 						poolConn := &PoolConn{
-							id:       fmt.Sprint(p.NewID()),
+							id:       fmt.Sprint(NewID()),
 							Conn:     conn,
 							ctx:      ctx,
 							cancel:   cancel,
@@ -155,7 +156,10 @@ func (p *Pool) Watch() {
 						p.Close()
 						return
 					}
-					p.FlushAlive()
+					closeNum := p.FlushAlive()
+					if closeNum > 0 {
+						p.Sig()
+					}
 					timer.Reset(timerDuration)
 				}
 			}
@@ -164,19 +168,32 @@ func (p *Pool) Watch() {
 	})
 }
 
-func (p *Pool) FlushAlive() {
+func (p *Pool) FlushAlive() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
+	log.Debugln("[Pool] FlushAlive begin %s %s", p.key, p.address)
+	closeNum := 0
 	for p.len() > 0 {
 		conn := p.list[p.headIndex]
 		if time.Since(conn.createAt) > p.keepAlive {
 			conn, _ := p.pull()
 			conn.cancel()
 			log.Debugln("[Pool] FlushAlive cancel pull 1 %s %s connID: %s %s", p.key, p.address, conn.id, conn.createAt.String())
+			closeNum++
 		} else {
 			break
 		}
+	}
+	log.Debugln("[Pool] FlushAlive finish %s %s closeNum: %d", p.key, p.address, closeNum)
+	return closeNum
+}
+
+func (p *Pool) Sig() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.closed {
+		// new a conn
+		p.signal <- struct{}{}
 	}
 }
 
@@ -251,11 +268,11 @@ func (p *Pool) pull() (*PoolConn, error) {
 	return conn, nil
 }
 
-func (p *Pool) NewID() int {
-	p.mu.Lock()
-	p.lastIntID++
-	p.mu.Unlock()
-	return p.lastIntID
+func NewID() int {
+	lastIntIDMutex.Lock()
+	lastIntID++
+	lastIntIDMutex.Unlock()
+	return lastIntID
 }
 
 func (p *Pool) Len() int {

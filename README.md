@@ -241,6 +241,14 @@ iptables:
   inbound-interface: eth0 # detect the inbound interface, default is 'lo'
 ```
 
+### proxy server connect pool configuration
+faster connect to remote proxy server(shadowsocks)
+
+```yaml
+# Enable proxy server connect pool, try to prepare 5 links for the upcoming use
+connect-pool-size: 5
+```
+
 ## Premium
 
 Premium core is proprietary. You can find their release notes and pre-built binaries [here](https://github.com/Dreamacro/clash/releases/tag/premium).

@@ -102,19 +102,28 @@ func waitPortOpen(host string, ports []string) bool {
 }
 
 func runBasicConnTest(t *testing.T, runner *hub.Runner) {
+	urlList := []string{
+		"https://google.com",
+		"https://www.google.com",
+		"https://www.google.com.hk",
+		"https://www.youtube.com",
+		"http://www.gstatic.com/generate_204",
+		"https://baidu.com",
+	}
+
+	//creating the proxyURL
+	proxyStr := "http://localhost:" + fmt.Sprint(runner.Config.General.Port)
+	proxyURL, err := url.Parse(proxyStr)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	log.Warnln("proxyURL: %s", proxyURL)
+
 	for i := 0; i < 30; i++ {
 
-		//creating the proxyURL
-		proxyStr := "http://localhost:" + fmt.Sprint(runner.Config.General.Port)
-		proxyURL, err := url.Parse(proxyStr)
-		if err != nil {
-			t.Error(err, i)
-			return
-		}
-		log.Warnln("proxyURL: %s", proxyURL)
-
 		//creating the URL to be loaded through the proxy
-		urlStr := "https://google.com"
+		urlStr := urlList[i%len(urlList)]
 		url, err := url.Parse(urlStr)
 		if err != nil {
 			t.Error(err, i)
@@ -157,7 +166,7 @@ func runBasicConnTest(t *testing.T, runner *hub.Runner) {
 
 		var sleepTime time.Duration
 		// sleepTime = time.Millisecond * 300
-		sleepTime = time.Second * time.Duration(rand.Intn(20))
+		sleepTime = time.Second * time.Duration(rand.Intn(i/10*10))
 		log.Infoln("sleepTime: %s", sleepTime)
 		time.Sleep(sleepTime)
 	}
