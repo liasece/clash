@@ -23,7 +23,7 @@ type option struct {
 	fromProxy     bool
 	pools         *Pools
 	poolID        string
-	onPoolConnect func(conn net.Conn)
+	onPoolConnect func(conn net.Conn) (net.Conn, error)
 }
 
 type Option func(opt *option)
@@ -40,7 +40,7 @@ func WithPoolID(poolID string) Option {
 	}
 }
 
-func WithOnPoolConnect(onPoolConnect func(conn net.Conn)) Option {
+func WithOnPoolConnect(onPoolConnect func(conn net.Conn) (net.Conn, error)) Option {
 	return func(opt *option) {
 		opt.onPoolConnect = onPoolConnect
 	}

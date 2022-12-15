@@ -108,7 +108,7 @@ func main() {
 		options = append(options, hub.WithSecret(secret))
 	}
 
-	if err := hub.Parse(options...); err != nil {
+	if _, err := hub.Parse(options...); err != nil {
 		log.Fatalln("Parse config error: %s", err.Error())
 	}
 

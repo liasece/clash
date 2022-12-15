@@ -27,7 +27,7 @@ var (
 	DisableIPv6                = false
 	ErrorInvalidedNetworkStack = errors.New("invalided network stack")
 	ErrorDisableIPv6           = errors.New("IPv6 is disabled, dialer cancel")
-	defaultPools               = &Pools{}
+	DefaultPools               = &Pools{}
 )
 
 func DialContext(ctx context.Context, network, address string, options ...Option) (net.Conn, error) {
@@ -45,11 +45,15 @@ func DialContext(ctx context.Context, network, address string, options ...Option
 		o(opt)
 	}
 
-	if poolSize > 1 && opt.useConnPool && opt.fromProxy {
+	ps := opt.pools
+	if ps == nil {
+		ps = DefaultPools
+	}
+	if ps.PoolSize > 0 && opt.useConnPool && opt.fromProxy {
 		defer func() {
 			log.Debugln("[Dialer] [Pool] DialContext finish: take: %s %s %s", address, network, time.Since(begin))
 		}()
-		return poolDialContext(ctx, network, address, opt)
+		return poolDialContext(ctx, ps, network, address, opt)
 	}
 
 	defer func() {
@@ -74,7 +78,7 @@ func PoolIDByHash(is ...interface{}) (string, error) {
 	return hex.EncodeToString(md5h.Sum(nil)), nil
 }
 
-func poolDialContext(ctx context.Context, network, address string, opt *option) (net.Conn, error) {
+func poolDialContext(ctx context.Context, ps *Pools, network, address string, opt *option) (net.Conn, error) {
 	key, err := PoolIDByHash(network, address,
 		opt.poolID,
 		opt.interfaceName,
@@ -87,11 +91,7 @@ func poolDialContext(ctx context.Context, network, address string, opt *option) 
 	if err != nil {
 		return nil, err
 	}
-	ps := opt.pools
-	if ps == nil {
-		ps = defaultPools
-	}
-	p := defaultPools.MustGet(key, network, address, opt)
+	p := ps.MustGet(key, network, address, opt)
 	conn, err := p.Pull(ctx)
 	if err != nil {
 		if !errors.Is(err, ErrPoolEmpty) {

@@ -64,8 +64,7 @@ type v2rayObfsOption struct {
 	Mux            bool              `obfs:"mux,omitempty"`
 }
 
-// StreamConn implements C.ProxyAdapter
-func (ss *ShadowSocks) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) {
+func (ss *ShadowSocks) initProto(c net.Conn) (net.Conn, error) {
 	switch ss.obfsMode {
 	case "tls":
 		c = obfs.NewTLSObfs(c, ss.obfsOption.Host)
@@ -79,10 +78,20 @@ func (ss *ShadowSocks) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, e
 			return nil, fmt.Errorf("%s connect error: %w", ss.addr, err)
 		}
 	}
+	return c, nil
+}
+
+// StreamConn implements C.ProxyAdapter
+func (ss *ShadowSocks) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) {
 	if metadata.NetWork == C.UDP && ss.option.UDPOverTCP {
 		return ss.method.DialConn(c, M.ParseSocksaddr(uot.UOTMagicAddress+":443"))
 	}
 	return ss.method.DialConn(c, M.ParseSocksaddr(metadata.RemoteAddress()))
+}
+
+func (ss *ShadowSocks) initInPool(c net.Conn) (net.Conn, error) {
+	tcpKeepAlive(c)
+	return ss.initProto(c)
 }
 
 // DialContext implements C.ProxyAdapter
@@ -93,7 +102,7 @@ func (ss *ShadowSocks) DialContext(ctx context.Context, metadata *C.Metadata, op
 		log.Debugln("[ShadowSocks] DialContext all finish: %s connID: %s tcp take: %s inTransaction: %s %s --> %s", ss.addr, connID, time.Since(begin), time.Since(metadata.CreateAt), metadata.SourceDetail(), metadata.RemoteAddress())
 	}()
 	for {
-		c, err := dialer.DialContext(ctx, "tcp", ss.addr, append([]dialer.Option{dialer.WithFromProxy(true), dialer.WithOnPoolConnect(tcpKeepAlive)}, ss.Base.DialOptions(opts...)...)...)
+		c, err := dialer.DialContext(ctx, "tcp", ss.addr, append([]dialer.Option{dialer.WithFromProxy(true), dialer.WithOnPoolConnect(ss.initInPool)}, ss.Base.DialOptions(opts...)...)...)
 		if err != nil {
 			return nil, fmt.Errorf("%s connect error: %w", ss.addr, err)
 		}
@@ -122,7 +131,13 @@ func (ss *ShadowSocks) iDialContext(c net.Conn, metadata *C.Metadata) (_ C.Conn,
 		tcpKeepAlive(c)
 	}
 	defer safeConnClose(c, err)
-
+	if poolConn, ok := c.(*dialer.PoolConn); !ok || poolConn == nil {
+		var err error
+		c, err = ss.initProto(c)
+		if err != nil {
+			return nil, err
+		}
+	}
 	c, err = ss.StreamConn(c, metadata)
 	return NewConn(c, ss), err
 }

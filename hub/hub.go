@@ -58,11 +58,15 @@ func enablePProfSvr(port int) {
 	}()
 }
 
+type Runner struct {
+	Config *config.Config
+}
+
 // Parse call at the beginning of clash
-func Parse(options ...Option) error {
+func Parse(options ...Option) (*Runner, error) {
 	cfg, err := executor.Parse()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	enablePProfSvr(cfg.General.PprofPort)
@@ -80,5 +84,7 @@ func Parse(options ...Option) error {
 	}
 
 	executor.ApplyConfig(cfg, true)
-	return nil
+	return &Runner{
+		Config: cfg,
+	}, err
 }

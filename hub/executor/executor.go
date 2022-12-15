@@ -317,6 +317,10 @@ func updateGeneral(general *config.General, force bool) {
 
 	iface.FlushCache()
 
+	dialer.DefaultPools = &dialer.Pools{
+		PoolSize: general.ConnectPoolSize,
+	}
+
 	if !force {
 		return
 	}

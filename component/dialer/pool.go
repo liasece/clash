@@ -12,7 +12,6 @@ import (
 )
 
 var (
-	poolSize          = 0
 	ErrPoolEmpty      = errors.New("pool is empty")
 	DefaultTCPTimeout = 30 * time.Second
 	keepAliveTime     = 30 * time.Second
@@ -22,6 +21,8 @@ var (
 type Pools struct {
 	m  map[string]*Pool
 	mu sync.Mutex
+
+	PoolSize int
 }
 
 func (p *Pools) MustGet(id string, network, address string, opt *option) *Pool {
@@ -39,9 +40,9 @@ func (p *Pools) MustGet(id string, network, address string, opt *option) *Pool {
 		// new a pool
 		pool := &Pool{
 			key:       id,
-			signal:    make(chan struct{}, poolSize),
-			list:      make([]*PoolConn, poolSize),
-			maxNum:    poolSize,
+			signal:    make(chan struct{}, p.PoolSize),
+			list:      make([]*PoolConn, p.PoolSize),
+			maxNum:    p.PoolSize,
 			keepAlive: keepAliveTime,
 
 			network: network,
@@ -121,6 +122,16 @@ func (p *Pool) Watch() {
 							break
 						}
 
+						if p.opt.onPoolConnect != nil {
+							newConn, err := p.opt.onPoolConnect(conn)
+							if err != nil {
+								conn.Close()
+								log.Debugln("[Pool] Watch onPoolConnect error %s %s {%s} error: %s", p.address, p.network, p.key, err.Error())
+								break
+							}
+							conn = newConn
+						}
+
 						poolConn := &PoolConn{
 							id:       fmt.Sprint(p.NewID()),
 							Conn:     conn,
@@ -129,11 +140,7 @@ func (p *Pool) Watch() {
 							createAt: time.Now(),
 						}
 
-						log.Debugln("[Pool] Watch iDialContext finish: %s %s id: %s take: %s", p.address, p.network, poolConn.id, time.Since(begin))
-
-						if p.opt.onPoolConnect != nil {
-							p.opt.onPoolConnect(conn)
-						}
+						log.Debugln("[Pool] Watch iDialContext finish: %s %s connID: %s take: %s", p.address, p.network, poolConn.id, time.Since(begin))
 
 						err = p.Push(poolConn)
 						if err != nil {
@@ -166,7 +173,7 @@ func (p *Pool) FlushAlive() {
 		if time.Since(conn.createAt) > p.keepAlive {
 			conn, _ := p.pull()
 			conn.cancel()
-			log.Debugln("[Pool] FlushAlive cancel pull 1 %s %s id: %s %s", p.key, p.address, conn.id, conn.createAt.String())
+			log.Debugln("[Pool] FlushAlive cancel pull 1 %s %s connID: %s %s", p.key, p.address, conn.id, conn.createAt.String())
 		} else {
 			break
 		}
@@ -222,7 +229,7 @@ func (p *Pool) Pull(ctx context.Context) (net.Conn, error) {
 	go func() {
 		<-ctx.Done()
 		res.cancel()
-		log.Debugln("[Pool] connect closed %s %s id: %s", p.key, p.address, res.id)
+		log.Debugln("[Pool] connect closed %s %s connID: %s", p.key, p.address, res.id)
 	}()
 
 	return res, err

@@ -43,19 +43,20 @@ import (
 type General struct {
 	Inbound
 	Controller
-	Mode          T.TunnelMode `json:"mode"`
-	UnifiedDelay  bool
-	LogLevel      log.LogLevel `json:"log-level"`
-	IPv6          bool         `json:"ipv6"`
-	Interface     string       `json:"interface-name"`
-	RoutingMark   int          `json:"-"`
-	GeodataMode   bool         `json:"geodata-mode"`
-	GeodataLoader string       `json:"geodata-loader"`
-	TCPConcurrent bool         `json:"tcp-concurrent"`
-	EnableProcess bool         `json:"enable-process"`
-	Tun           Tun          `json:"tun"`
-	Sniffing      bool         `json:"sniffing"`
-	EBpf          EBpf         `json:"-"`
+	Mode            T.TunnelMode `json:"mode"`
+	UnifiedDelay    bool
+	LogLevel        log.LogLevel `json:"log-level"`
+	IPv6            bool         `json:"ipv6"`
+	Interface       string       `json:"interface-name"`
+	RoutingMark     int          `json:"-"`
+	GeodataMode     bool         `json:"geodata-mode"`
+	GeodataLoader   string       `json:"geodata-loader"`
+	TCPConcurrent   bool         `json:"tcp-concurrent"`
+	EnableProcess   bool         `json:"enable-process"`
+	Tun             Tun          `json:"tun"`
+	Sniffing        bool         `json:"sniffing"`
+	EBpf            EBpf         `json:"-"`
+	ConnectPoolSize int          `json:"connect-pool-size"`
 }
 
 // Inbound config
@@ -304,6 +305,7 @@ type RawConfig struct {
 	GeodataLoader      string       `yaml:"geodata-loader"`
 	TCPConcurrent      bool         `yaml:"tcp-concurrent" json:"tcp-concurrent"`
 	EnableProcess      bool         `yaml:"enable-process" json:"enable-process"`
+	ConnectPoolSize    int          `yaml:"connect-pool-size" json:"connect-pool-size"`
 
 	Sniffer       RawSniffer                `yaml:"sniffer"`
 	ProxyProvider map[string]map[string]any `yaml:"proxy-providers"`
@@ -363,21 +365,22 @@ func Parse(buf []byte) (*Config, error) {
 func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 	// config with default value
 	rawCfg := &RawConfig{
-		AllowLan:       false,
-		BindAddress:    "*",
-		IPv6:           true,
-		Mode:           T.Rule,
-		GeodataMode:    C.GeodataMode,
-		GeodataLoader:  "memconservative",
-		UnifiedDelay:   false,
-		Authentication: []string{},
-		LogLevel:       log.INFO,
-		Hosts:          map[string]string{},
-		Rule:           []string{},
-		Proxy:          []map[string]any{},
-		ProxyGroup:     []map[string]any{},
-		TCPConcurrent:  false,
-		EnableProcess:  false,
+		AllowLan:        false,
+		BindAddress:     "*",
+		IPv6:            true,
+		Mode:            T.Rule,
+		GeodataMode:     C.GeodataMode,
+		GeodataLoader:   "memconservative",
+		UnifiedDelay:    false,
+		Authentication:  []string{},
+		LogLevel:        log.INFO,
+		Hosts:           map[string]string{},
+		Rule:            []string{},
+		Proxy:           []map[string]any{},
+		ProxyGroup:      []map[string]any{},
+		TCPConcurrent:   false,
+		EnableProcess:   false,
+		ConnectPoolSize: 0,
 		Tun: RawTun{
 			Enable:              false,
 			Device:              "",
@@ -545,17 +548,18 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 			ExternalUI:         cfg.ExternalUI,
 			Secret:             cfg.Secret,
 		},
-		UnifiedDelay:  cfg.UnifiedDelay,
-		Mode:          cfg.Mode,
-		LogLevel:      cfg.LogLevel,
-		IPv6:          cfg.IPv6,
-		Interface:     cfg.Interface,
-		RoutingMark:   cfg.RoutingMark,
-		GeodataMode:   cfg.GeodataMode,
-		GeodataLoader: cfg.GeodataLoader,
-		TCPConcurrent: cfg.TCPConcurrent,
-		EnableProcess: cfg.EnableProcess,
-		EBpf:          cfg.EBpf,
+		UnifiedDelay:    cfg.UnifiedDelay,
+		Mode:            cfg.Mode,
+		LogLevel:        cfg.LogLevel,
+		IPv6:            cfg.IPv6,
+		Interface:       cfg.Interface,
+		RoutingMark:     cfg.RoutingMark,
+		GeodataMode:     cfg.GeodataMode,
+		GeodataLoader:   cfg.GeodataLoader,
+		TCPConcurrent:   cfg.TCPConcurrent,
+		EnableProcess:   cfg.EnableProcess,
+		EBpf:            cfg.EBpf,
+		ConnectPoolSize: cfg.ConnectPoolSize,
 	}, nil
 }
 
